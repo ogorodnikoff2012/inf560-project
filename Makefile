@@ -3,7 +3,7 @@ HEADER_DIR=include
 OBJ_DIR=obj
 
 CC=mpicc
-CFLAGS=-O3 -I$(HEADER_DIR)
+CFLAGS=-O3 -I$(HEADER_DIR) -std=gnu99
 LDFLAGS=-lm
 
 SRC= dgif_lib.c \
@@ -31,8 +31,8 @@ all: $(OBJ_DIR) sobelf
 $(OBJ_DIR):
 	mkdir $(OBJ_DIR)
 
-$(OBJ_DIR)/%.o : $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $^
+$(OBJ_DIR)/%.o : $(SRC_DIR)/%.c $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 sobelf:$(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
