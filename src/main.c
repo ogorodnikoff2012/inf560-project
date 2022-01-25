@@ -3,10 +3,13 @@
  *
  * Image Filtering Project
  */
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <sys/time.h>
+
+#include <mpi.h>
 
 #include "gif_lib.h"
 
@@ -19,6 +22,8 @@ typedef struct pixel {
     int g; /* Green */
     int b; /* Blue */
 } pixel;
+
+MPI_Datatype kMPIPixelDatatype;
 
 /* Represent one GIF image (animated or not */
 typedef struct animated_gif {
@@ -556,30 +561,28 @@ int store_pixels(char* filename, animated_gif* image) {
     return 1;
 }
 
-void apply_gray_filter(animated_gif* image) {
-    int i, j;
+void apply_gray_filter(animated_gif* image, int image_index) {
+    int j;
     pixel** p;
 
     p = image->p;
 
-    for (i = 0; i < image->n_images; i++) {
-        for (j = 0; j < image->width[i] * image->height[i]; j++) {
-            int moy;
+    for (j = 0; j < image->width[image_index] * image->height[image_index]; j++) {
+        int moy;
 
-            moy = (p[i][j].r + p[i][j].g + p[i][j].b) / 3;
+        moy = (p[image_index][j].r + p[image_index][j].g + p[image_index][j].b) / 3;
 
-            if (moy < 0) {
-                moy = 0;
-            }
-
-            if (moy > 255) {
-                moy = 255;
-            }
-
-            p[i][j].r = moy;
-            p[i][j].g = moy;
-            p[i][j].b = moy;
+        if (moy < 0) {
+            moy = 0;
         }
+
+        if (moy > 255) {
+            moy = 255;
+        }
+
+        p[image_index][j].r = moy;
+        p[image_index][j].g = moy;
+        p[image_index][j].b = moy;
     }
 }
 
@@ -603,8 +606,8 @@ void apply_gray_line(animated_gif* image) {
     }
 }
 
-void apply_blur_filter(animated_gif* image, int size, int threshold) {
-    int i, j, k;
+void apply_blur_filter(animated_gif* image, int size, int threshold, int image_index) {
+    int j, k;
     int width, height;
     int end = 0;
     int n_iter = 0;
@@ -617,193 +620,349 @@ void apply_blur_filter(animated_gif* image, int size, int threshold) {
 
 
     /* Process all images */
-    for (i = 0; i < image->n_images; i++) {
-        n_iter = 0;
-        width = image->width[i];
-        height = image->height[i];
+    n_iter = 0;
+    width = image->width[image_index];
+    height = image->height[image_index];
 
-        /* Allocate array of new pixels */
-        new = (pixel*)malloc(width * height * sizeof(pixel));
-
-
-        /* Perform at least one blur iteration */
-        do {
-            end = 1;
-            n_iter++;
+    /* Allocate array of new pixels */
+    new = (pixel*)malloc(width * height * sizeof(pixel));
 
 
-            for (j = 0; j < height - 1; j++) {
-                for (k = 0; k < width - 1; k++) {
-                    new[CONV(j, k, width)].r = p[i][CONV(j, k, width)].r;
-                    new[CONV(j, k, width)].g = p[i][CONV(j, k, width)].g;
-                    new[CONV(j, k, width)].b = p[i][CONV(j, k, width)].b;
-                }
+    /* Perform at least one blur iteration */
+    do {
+        end = 1;
+        n_iter++;
+
+
+        for (j = 0; j < height - 1; j++) {
+            for (k = 0; k < width - 1; k++) {
+                new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
             }
+        }
 
-            /* Apply blur on top part of image (10%) */
-            for (j = size; j < height / 10 - size; j++) {
-                for (k = size; k < width - size; k++) {
-                    int stencil_j, stencil_k;
-                    int t_r = 0;
-                    int t_g = 0;
-                    int t_b = 0;
+        /* Apply blur on top part of image (10%) */
+        for (j = size; j < height / 10 - size; j++) {
+            for (k = size; k < width - size; k++) {
+                int stencil_j, stencil_k;
+                int t_r = 0;
+                int t_g = 0;
+                int t_b = 0;
 
-                    for (stencil_j = -size; stencil_j <= size; stencil_j++) {
-                        for (stencil_k = -size; stencil_k <= size; stencil_k++) {
-                            t_r += p[i][CONV(j + stencil_j, k + stencil_k, width)].r;
-                            t_g += p[i][CONV(j + stencil_j, k + stencil_k, width)].g;
-                            t_b += p[i][CONV(j + stencil_j, k + stencil_k, width)].b;
-                        }
+                for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                    for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                        t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                        t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                        t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
                     }
-
-                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
                 }
+
+                new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
             }
+        }
 
-            /* Copy the middle part of the image */
-            for (j = height / 10 - size; j < height * 0.9 + size; j++) {
-                for (k = size; k < width - size; k++) {
-                    new[CONV(j, k, width)].r = p[i][CONV(j, k, width)].r;
-                    new[CONV(j, k, width)].g = p[i][CONV(j, k, width)].g;
-                    new[CONV(j, k, width)].b = p[i][CONV(j, k, width)].b;
-                }
+        /* Copy the middle part of the image */
+        for (j = height / 10 - size; j < height * 0.9 + size; j++) {
+            for (k = size; k < width - size; k++) {
+                new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
             }
+        }
 
-            /* Apply blur on the bottom part of the image (10%) */
-            for (j = height * 0.9 + size; j < height - size; j++) {
-                for (k = size; k < width - size; k++) {
-                    int stencil_j, stencil_k;
-                    int t_r = 0;
-                    int t_g = 0;
-                    int t_b = 0;
+        /* Apply blur on the bottom part of the image (10%) */
+        for (j = height * 0.9 + size; j < height - size; j++) {
+            for (k = size; k < width - size; k++) {
+                int stencil_j, stencil_k;
+                int t_r = 0;
+                int t_g = 0;
+                int t_b = 0;
 
-                    for (stencil_j = -size; stencil_j <= size; stencil_j++) {
-                        for (stencil_k = -size; stencil_k <= size; stencil_k++) {
-                            t_r += p[i][CONV(j + stencil_j, k + stencil_k, width)].r;
-                            t_g += p[i][CONV(j + stencil_j, k + stencil_k, width)].g;
-                            t_b += p[i][CONV(j + stencil_j, k + stencil_k, width)].b;
-                        }
+                for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                    for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                        t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                        t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                        t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
                     }
-
-                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
                 }
+
+                new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
             }
+        }
 
-            for (j = 1; j < height - 1; j++) {
-                for (k = 1; k < width - 1; k++) {
+        for (j = 1; j < height - 1; j++) {
+            for (k = 1; k < width - 1; k++) {
 
-                    float diff_r;
-                    float diff_g;
-                    float diff_b;
+                float diff_r;
+                float diff_g;
+                float diff_b;
 
-                    diff_r = (new[CONV(j, k, width)].r - p[i][CONV(j, k, width)].r);
-                    diff_g = (new[CONV(j, k, width)].g - p[i][CONV(j, k, width)].g);
-                    diff_b = (new[CONV(j, k, width)].b - p[i][CONV(j, k, width)].b);
+                diff_r = (new[CONV(j, k, width)].r - p[image_index][CONV(j, k, width)].r);
+                diff_g = (new[CONV(j, k, width)].g - p[image_index][CONV(j, k, width)].g);
+                diff_b = (new[CONV(j, k, width)].b - p[image_index][CONV(j, k, width)].b);
 
-                    if (diff_r > threshold || -diff_r > threshold
-                        ||
-                        diff_g > threshold || -diff_g > threshold
-                        ||
-                        diff_b > threshold || -diff_b > threshold
-                            ) {
-                        end = 0;
-                    }
-
-                    p[i][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
-                    p[i][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
-                    p[i][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+                if (diff_r > threshold || -diff_r > threshold
+                    ||
+                    diff_g > threshold || -diff_g > threshold
+                    ||
+                    diff_b > threshold || -diff_b > threshold
+                        ) {
+                    end = 0;
                 }
-            }
 
-        } while (threshold > 0 && !end);
+                p[image_index][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
+                p[image_index][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
+                p[image_index][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+            }
+        }
+
+    } while (threshold > 0 && !end);
 
 #if SOBELF_DEBUG
-        printf( "BLUR: number of iterations for image %d\n", n_iter ) ;
+    printf( "BLUR: number of iterations for image %d\n", n_iter ) ;
 #endif
 
-        free(new);
-    }
+    free(new);
 
 }
 
-void apply_sobel_filter(animated_gif* image) {
-    int i, j, k;
+void apply_sobel_filter(animated_gif* image, int image_index) {
+    int j, k;
     int width, height;
 
     pixel** p;
 
     p = image->p;
 
-    for (i = 0; i < image->n_images; i++) {
-        width = image->width[i];
-        height = image->height[i];
+    width = image->width[image_index];
+    height = image->height[image_index];
 
-        pixel* sobel;
+    pixel* sobel;
 
-        sobel = (pixel*)malloc(width * height * sizeof(pixel));
+    sobel = (pixel*)malloc(width * height * sizeof(pixel));
 
-        for (j = 1; j < height - 1; j++) {
-            for (k = 1; k < width - 1; k++) {
-                int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
-                int pixel_blue_so, pixel_blue_s, pixel_blue_se;
-                int pixel_blue_o, pixel_blue, pixel_blue_e;
+    for (j = 1; j < height - 1; j++) {
+        for (k = 1; k < width - 1; k++) {
+            int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
+            int pixel_blue_so, pixel_blue_s, pixel_blue_se;
+            int pixel_blue_o, pixel_blue, pixel_blue_e;
 
-                float deltaX_blue;
-                float deltaY_blue;
-                float val_blue;
+            float deltaX_blue;
+            float deltaY_blue;
+            float val_blue;
 
-                pixel_blue_no = p[i][CONV(j - 1, k - 1, width)].b;
-                pixel_blue_n = p[i][CONV(j - 1, k, width)].b;
-                pixel_blue_ne = p[i][CONV(j - 1, k + 1, width)].b;
-                pixel_blue_so = p[i][CONV(j + 1, k - 1, width)].b;
-                pixel_blue_s = p[i][CONV(j + 1, k, width)].b;
-                pixel_blue_se = p[i][CONV(j + 1, k + 1, width)].b;
-                pixel_blue_o = p[i][CONV(j, k - 1, width)].b;
-                pixel_blue = p[i][CONV(j, k, width)].b;
-                pixel_blue_e = p[i][CONV(j, k + 1, width)].b;
+            pixel_blue_no = p[image_index][CONV(j - 1, k - 1, width)].b;
+            pixel_blue_n = p[image_index][CONV(j - 1, k, width)].b;
+            pixel_blue_ne = p[image_index][CONV(j - 1, k + 1, width)].b;
+            pixel_blue_so = p[image_index][CONV(j + 1, k - 1, width)].b;
+            pixel_blue_s = p[image_index][CONV(j + 1, k, width)].b;
+            pixel_blue_se = p[image_index][CONV(j + 1, k + 1, width)].b;
+            pixel_blue_o = p[image_index][CONV(j, k - 1, width)].b;
+            pixel_blue = p[image_index][CONV(j, k, width)].b;
+            pixel_blue_e = p[image_index][CONV(j, k + 1, width)].b;
 
-                deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so +
-                              pixel_blue_se;
+            deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so +
+                          pixel_blue_se;
 
-                deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n -
-                              pixel_blue_no;
+            deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n -
+                          pixel_blue_no;
 
-                val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
+            val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
 
 
-                if (val_blue > 50) {
-                    sobel[CONV(j, k, width)].r = 255;
-                    sobel[CONV(j, k, width)].g = 255;
-                    sobel[CONV(j, k, width)].b = 255;
-                } else {
-                    sobel[CONV(j, k, width)].r = 0;
-                    sobel[CONV(j, k, width)].g = 0;
-                    sobel[CONV(j, k, width)].b = 0;
-                }
+            if (val_blue > 50) {
+                sobel[CONV(j, k, width)].r = 255;
+                sobel[CONV(j, k, width)].g = 255;
+                sobel[CONV(j, k, width)].b = 255;
+            } else {
+                sobel[CONV(j, k, width)].r = 0;
+                sobel[CONV(j, k, width)].g = 0;
+                sobel[CONV(j, k, width)].b = 0;
             }
         }
-
-        for (j = 1; j < height - 1; j++) {
-            for (k = 1; k < width - 1; k++) {
-                p[i][CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
-                p[i][CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
-                p[i][CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
-            }
-        }
-
-        free(sobel);
     }
+
+    for (j = 1; j < height - 1; j++) {
+        for (k = 1; k < width - 1; k++) {
+            p[image_index][CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
+            p[image_index][CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
+            p[image_index][CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
+        }
+    }
+
+    free(sobel);
+
 
 }
 
-/*
- * Main entry point
- */
-int main(int argc, char** argv) {
+void apply_all_filters(animated_gif* image) {
+    for (int i = 0; i < image->n_images; ++i) {
+        // Convert the pixels into grayscale
+        apply_gray_filter(image, i);
+    }
+
+    for (int i = 0; i < image->n_images; ++i) {
+        // Apply blur filter with convergence value
+        apply_blur_filter(image, 5, 20, i);
+    }
+
+    for (int i = 0; i < image->n_images; ++i) {
+        // Apply sobel filter on pixels
+        apply_sobel_filter(image, i);
+    }
+}
+
+void prepare_pixel_datatype(MPI_Datatype* datatype) {
+    const int nitems = 3;
+    int blocklengths[3] = {1, 1, 1};
+    MPI_Datatype types[3] = {MPI_INT, MPI_INT, MPI_INT};
+    MPI_Aint offsets[3];
+
+    offsets[0] = offsetof(pixel, r);
+    offsets[1] = offsetof(pixel, g);
+    offsets[2] = offsetof(pixel, b);
+    MPI_Type_create_struct(nitems, blocklengths, offsets, types, datatype);
+    MPI_Type_commit(datatype);
+}
+
+int slave_main(int argc, char* argv[]) {
+    int rank;
+    int world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    animated_gif image;
+
+    /* First, we broadcast metadata */
+    MPI_Bcast(&image.n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    image.width = calloc(image.n_images, sizeof(int));
+    image.height = calloc(image.n_images, sizeof(int));
+    image.p = calloc(image.n_images, sizeof(pixel*));
+
+    MPI_Bcast(image.width, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(image.height, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
+
+    int image_index = -1;
+    MPI_Send(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD);
+
+    MPI_Request processed_image_requests[image.n_images];
+    for (int i = 0; i < image.n_images; ++i) {
+        processed_image_requests[i] = MPI_REQUEST_NULL;
+    }
+
+    while (true) {
+        MPI_Recv(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        if (image_index == -1) {
+            break;
+        }
+
+        image.p[image_index] = calloc(image.width[image_index] * image.height[image_index], sizeof(pixel));
+        MPI_Recv(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
+                 image_index, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        /* Convert the pixels into grayscale */
+        apply_gray_filter(&image, image_index);
+
+        /* Apply blur filter with convergence value */
+        apply_blur_filter(&image, 5, 20, image_index);
+
+        /* Apply sobel filter on pixels */
+        apply_sobel_filter(&image, image_index);
+
+
+        MPI_Request req;
+        MPI_Isend(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD, &req);
+        MPI_Request_free(&req);
+
+        MPI_Isend(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
+                  image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
+    }
+
+    for (int i = 0; i < image.n_images; ++i) {
+        if (processed_image_requests[i] != MPI_REQUEST_NULL) {
+            MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
+        }
+        free(image.p[i]);
+    }
+
+    free(image.width);
+    free(image.height);
+    free(image.p);
+
+    return 0;
+}
+
+void do_master_work(animated_gif* image) {
+    int rank;
+    int world_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    /* First, we broadcast metadata */
+    MPI_Bcast(&image->n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(image->width, image->n_images, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(image->height, image->n_images, MPI_INT, 0, MPI_COMM_WORLD);
+
+    /* Start scheduling */
+    MPI_Request table_of_requests[world_size];
+    int slave_signals[world_size];
+    table_of_requests[0] = MPI_REQUEST_NULL;
+
+    MPI_Request processed_image_requests[image->n_images];
+    int processed_images = 0;
+    int sent_images = 0;
+    for (int i = 0; i < image->n_images; ++i) {
+        processed_image_requests[i] = MPI_REQUEST_NULL;
+    }
+
+    for (int i = 1; i < world_size; ++i) {
+        MPI_Irecv(slave_signals + i, 1, MPI_INT, i, -1, MPI_COMM_WORLD, table_of_requests + i);
+    }
+
+    while (processed_images < image->n_images) {
+        int indx;
+        MPI_Waitany(world_size, table_of_requests, &indx, MPI_STATUS_IGNORE);
+
+        int image_index = slave_signals[indx];
+        if (image_index != -1) {
+            MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
+                      kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
+            ++processed_images;
+        }
+
+        if (sent_images == image->n_images) {
+            MPI_Request req;
+            int next_image_index = -1;
+            MPI_Isend(&next_image_index, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, &req);
+            MPI_Request_free(&req);
+        } else {
+            MPI_Request req;
+            int next_image_index = sent_images++;
+            MPI_Isend(&next_image_index, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, &req);
+            MPI_Request_free(&req);
+            MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
+                      kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
+            MPI_Request_free(&req);
+
+            MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, table_of_requests + indx);
+        }
+    }
+
+    /* Finally, we wait for all images */
+    for (int i = 0; i < image->n_images; ++i) {
+        if (processed_image_requests[i] != MPI_REQUEST_NULL) {
+            MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
+        }
+    }
+}
+
+int master_main(int argc, char* argv[]) {
     char* input_filename;
     char* output_filename;
     animated_gif* image;
@@ -812,7 +971,7 @@ int main(int argc, char** argv) {
 
     /* Check command-line arguments */
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s input.gif output.gif \n", argv[0]);
+        fprintf(stderr, "Usage: %s input.gif output.gif\n", argv[0]);
         return 1;
     }
 
@@ -840,14 +999,7 @@ int main(int argc, char** argv) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    /* Convert the pixels into grayscale */
-    apply_gray_filter(image);
-
-    /* Apply blur filter with convergence value */
-    apply_blur_filter(image, 5, 20);
-
-    /* Apply sobel filter on pixels */
-    apply_sobel_filter(image);
+    do_master_work(image);
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);
@@ -872,4 +1024,97 @@ int main(int argc, char** argv) {
     printf("Export done in %lf s in file %s\n", duration, output_filename);
 
     return 0;
+}
+
+int old_main(int argc, char* argv[]) {
+    char* input_filename;
+    char* output_filename;
+    animated_gif* image;
+    struct timeval t1, t2;
+    double duration;
+
+    /* Check command-line arguments */
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s input.gif output.gif\n", argv[0]);
+        return 1;
+    }
+
+    input_filename = argv[1];
+    output_filename = argv[2];
+
+    /* IMPORT Timer start */
+    gettimeofday(&t1, NULL);
+
+    /* Load file and store the pixels in array */
+    image = load_pixels(input_filename);
+
+    if (image == NULL) {
+        return 1;
+    }
+
+    /* IMPORT Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("GIF loaded from file %s with %d image(s) in %lf s\n",
+           input_filename, image->n_images, duration);
+
+    /* FILTER Timer start */
+    gettimeofday(&t1, NULL);
+
+    apply_all_filters(image);
+
+    /* FILTER Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("SOBEL done in %lf s\n", duration);
+
+    /* EXPORT Timer start */
+    gettimeofday(&t1, NULL);
+
+    /* Store file from array of pixels to GIF file */
+    if (!store_pixels(output_filename, image)) {
+        return 1;
+    }
+
+    /* EXPORT Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("Export done in %lf s in file %s\n", duration, output_filename);
+
+    return 0;
+}
+
+
+/*
+ * Main entry point
+ */
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+
+    prepare_pixel_datatype(&kMPIPixelDatatype);
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    int world_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    int ret_code;
+
+    if (world_size == 1) {
+        ret_code = old_main(argc, argv);
+    } else if (rank == 0) {
+        ret_code = master_main(argc, argv);
+    } else {
+        ret_code = slave_main(argc, argv);
+    }
+
+    MPI_Finalize();
+    return ret_code;
 }
