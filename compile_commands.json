@@ -1,0 +1,119 @@
+[
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/dgif_lib.o",
+   "src/dgif_lib.c"
+  ],
+  "file": "src/dgif_lib.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/egif_lib.o",
+   "src/egif_lib.c"
+  ],
+  "file": "src/egif_lib.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/gif_err.o",
+   "src/gif_err.c"
+  ],
+  "file": "src/gif_err.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/gif_font.o",
+   "src/gif_font.c"
+  ],
+  "file": "src/gif_font.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/gif_hash.o",
+   "src/gif_hash.c"
+  ],
+  "file": "src/gif_hash.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/gifalloc.o",
+   "src/gifalloc.c"
+  ],
+  "file": "src/gifalloc.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/main.o",
+   "src/main.c"
+  ],
+  "file": "src/main.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/openbsd-reallocarray.o",
+   "src/openbsd-reallocarray.c"
+  ],
+  "file": "src/openbsd-reallocarray.c"
+ },
+ {
+  "directory": "/home/xenon/ecole/inf560/sobelf",
+  "arguments": [
+   "gcc",
+   "-O3",
+   "-Iinclude",
+   "-c",
+   "-o",
+   "obj/quantize.o",
+   "src/quantize.c"
+  ],
+  "file": "src/quantize.c"
+ }
+]
