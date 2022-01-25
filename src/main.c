@@ -848,8 +848,10 @@ int slave_main(int argc, char* argv[]) {
     MPI_Bcast(image.width, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(image.height, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
 
+    const int kSignalTag = image.n_images;
+
     int image_index = -1;
-    MPI_Send(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD);
+    MPI_Send(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD);
 
     MPI_Request processed_image_requests[image.n_images];
     for (int i = 0; i < image.n_images; ++i) {
@@ -857,7 +859,7 @@ int slave_main(int argc, char* argv[]) {
     }
 
     while (true) {
-        MPI_Recv(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         if (image_index == -1) {
             break;
         }
@@ -877,7 +879,7 @@ int slave_main(int argc, char* argv[]) {
 
 
         MPI_Request req;
-        MPI_Isend(&image_index, 1, MPI_INT, 0, -1, MPI_COMM_WORLD, &req);
+        MPI_Isend(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, &req);
         MPI_Request_free(&req);
 
         MPI_Isend(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
@@ -904,6 +906,8 @@ void do_master_work(animated_gif* image) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+    const int kSignalTag = image->n_images;
+
     /* First, we broadcast metadata */
     MPI_Bcast(&image->n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(image->width, image->n_images, MPI_INT, 0, MPI_COMM_WORLD);
@@ -922,7 +926,7 @@ void do_master_work(animated_gif* image) {
     }
 
     for (int i = 1; i < world_size; ++i) {
-        MPI_Irecv(slave_signals + i, 1, MPI_INT, i, -1, MPI_COMM_WORLD, table_of_requests + i);
+        MPI_Irecv(slave_signals + i, 1, MPI_INT, i, kSignalTag, MPI_COMM_WORLD, table_of_requests + i);
     }
 
     while (processed_images < image->n_images) {
@@ -939,18 +943,18 @@ void do_master_work(animated_gif* image) {
         if (sent_images == image->n_images) {
             MPI_Request req;
             int next_image_index = -1;
-            MPI_Isend(&next_image_index, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, &req);
+            MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
         } else {
             MPI_Request req;
             int next_image_index = sent_images++;
-            MPI_Isend(&next_image_index, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, &req);
+            MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
             MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
                       kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
 
-            MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, -1, MPI_COMM_WORLD, table_of_requests + indx);
+            MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, table_of_requests + indx);
         }
     }
 
