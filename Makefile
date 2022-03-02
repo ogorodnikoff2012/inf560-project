@@ -3,7 +3,7 @@ HEADER_DIR=include
 OBJ_DIR=obj
 
 CC=mpicc
-CFLAGS=-O3 -I$(HEADER_DIR) -std=gnu99
+CFLAGS=-O3 -I$(HEADER_DIR) -fopenmp -std=gnu99
 LDFLAGS=-lm
 
 SRC= dgif_lib.c \

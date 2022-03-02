@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <sys/time.h>
+#include <omp.h>
 
 #include <mpi.h>
 
@@ -87,6 +88,8 @@ animated_gif* load_pixels(char* filename) {
     }
 
     /* Fill the width and height */
+    /* TODO maybe parallel for? */
+    #pragma omp for
     for (i = 0; i < n_images; i++) {
         width[i] = g->SavedImages[i].ImageDesc.Width;
         height[i] = g->SavedImages[i].ImageDesc.Height;
@@ -130,6 +133,7 @@ animated_gif* load_pixels(char* filename) {
         return NULL;
     }
 
+    /* TODO parallel for? */
     for (i = 0; i < n_images; i++) {
         p[i] = (pixel*)malloc(width[i] * height[i] * sizeof(pixel));
 
@@ -143,29 +147,44 @@ animated_gif* load_pixels(char* filename) {
     /* Fill pixels */
 
     /* For each image */
-    for (i = 0; i < n_images; i++) {
-        int j;
+    int j;
 
-        /* Get the local colormap if needed */
-        if (g->SavedImages[i].ImageDesc.ColorMap) {
+    bool success = true;
 
-            /* TODO No support for local color map */
-            fprintf(stderr, "Error: application does not support local colormap\n");
-            return NULL;
+    #pragma omp parallel
+    {
+        #pragma omp for private(j)
+        for (i = 0; i < n_images; i++) {
 
-            colmap = g->SavedImages[i].ImageDesc.ColorMap;
+            /* Get the local colormap if needed */
+            if (g->SavedImages[i].ImageDesc.ColorMap) {
+
+                /* TODO No support for local color map */
+                #pragma omp critical
+                {
+                    fprintf(stderr, "Error: application does not support local colormap\n");
+                    success = false;
+                }
+                #pragma omp cancel for
+
+                colmap = g->SavedImages[i].ImageDesc.ColorMap;
+            }
+
+            /* Traverse the image and fill pixels */
+            for (j = 0; j < width[i] * height[i]; j++) {
+                int c;
+
+                c = g->SavedImages[i].RasterBits[j];
+
+                p[i][j].r = colmap->Colors[c].Red;
+                p[i][j].g = colmap->Colors[c].Green;
+                p[i][j].b = colmap->Colors[c].Blue;
+            }
         }
+    }
 
-        /* Traverse the image and fill pixels */
-        for (j = 0; j < width[i] * height[i]; j++) {
-            int c;
-
-            c = g->SavedImages[i].RasterBits[j];
-
-            p[i][j].r = colmap->Colors[c].Red;
-            p[i][j].g = colmap->Colors[c].Green;
-            p[i][j].b = colmap->Colors[c].Blue;
-        }
+    if (!success) {
+        return NULL;
     }
 
     /* Allocate image info */
@@ -529,29 +548,41 @@ int store_pixels(char* filename, animated_gif* image) {
 
     image->g->SColorMap = cmo;
 
+    bool success = true;
     /* Update the raster bits according to color map */
-    for (i = 0; i < image->n_images; i++) {
-        for (j = 0; j < image->width[i] * image->height[i]; j++) {
-            int found_index = -1;
+    #pragma omp parallel
+    {
+        #pragma omp for private(j)
+        for (i = 0; i < image->n_images; i++) {
+            for (j = 0; j < image->width[i] * image->height[i]; j++) {
+                int found_index = -1;
 
-            for (k = 0; k < n_colors; k++) {
-                if (p[i][j].r == image->g->SColorMap->Colors[k].Red &&
-                    p[i][j].g == image->g->SColorMap->Colors[k].Green &&
-                    p[i][j].b == image->g->SColorMap->Colors[k].Blue) {
-                    found_index = k;
+                for (k = 0; k < n_colors; k++) {
+                    if (p[i][j].r == image->g->SColorMap->Colors[k].Red &&
+                        p[i][j].g == image->g->SColorMap->Colors[k].Green &&
+                        p[i][j].b == image->g->SColorMap->Colors[k].Blue) {
+                        found_index = k;
+                    }
                 }
-            }
 
-            if (found_index == -1) {
-                fprintf(stderr,
-                        "Error: Unable to find a pixel in the color map\n");
-                return 0;
-            }
+                if (found_index == -1) {
+                    #pragma omp critical
+                    {
+                        fprintf(stderr,
+                                "Error: Unable to find a pixel in the color map\n");
+                        success = false;
+                    }
+                    #pragma omp cancel for
+                }
 
-            image->g->SavedImages[i].RasterBits[j] = found_index;
+                image->g->SavedImages[i].RasterBits[j] = found_index;
+            }
         }
     }
 
+    if (!success) {
+        return 0;
+    }
 
     /* Write the final image */
     if (!output_modified_read_gif(filename, image->g)) {
@@ -567,6 +598,7 @@ void apply_gray_filter(animated_gif* image, int image_index) {
 
     p = image->p;
 
+    #pragma omp parallel for
     for (j = 0; j < image->width[image_index] * image->height[image_index]; j++) {
         int moy;
 
@@ -632,95 +664,101 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
     do {
         end = 1;
         n_iter++;
-
-
-        for (j = 0; j < height - 1; j++) {
-            for (k = 0; k < width - 1; k++) {
-                new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
-                new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
-                new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+        #pragma omp parallel
+        {
+            #pragma omp for collapse(2) private(k)
+            for (j = 0; j < height - 1; j++) {
+                for (k = 0; k < width - 1; k++) {
+                    new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+                }
             }
-        }
 
-        /* Apply blur on top part of image (10%) */
-        for (j = size; j < height / 10 - size; j++) {
-            for (k = size; k < width - size; k++) {
-                int stencil_j, stencil_k;
-                int t_r = 0;
-                int t_g = 0;
-                int t_b = 0;
+            /* Apply blur on top part of image (10%) */
+            #pragma omp for collapse(2) private(k)
+            for (j = size; j < height / 10 - size; j++) {
+                for (k = size; k < width - size; k++) {
+                    int stencil_j, stencil_k;
+                    int t_r = 0;
+                    int t_g = 0;
+                    int t_b = 0;
 
-                for (stencil_j = -size; stencil_j <= size; stencil_j++) {
-                    for (stencil_k = -size; stencil_k <= size; stencil_k++) {
-                        t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
-                        t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
-                        t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                    for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                        for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                            t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                            t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                            t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                        }
                     }
+
+                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
                 }
-
-                new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
             }
-        }
 
-        /* Copy the middle part of the image */
-        for (j = height / 10 - size; j < height * 0.9 + size; j++) {
-            for (k = size; k < width - size; k++) {
-                new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
-                new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
-                new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+            /* Copy the middle part of the image */
+            const int finish = height * 0.9 + size;
+            #pragma omp for collapse(2) private(k)
+            for (j = height / 10 - size; j < finish; j++) {
+                for (k = size; k < width - size; k++) {
+                    new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+                }
             }
-        }
 
-        /* Apply blur on the bottom part of the image (10%) */
-        for (j = height * 0.9 + size; j < height - size; j++) {
-            for (k = size; k < width - size; k++) {
-                int stencil_j, stencil_k;
-                int t_r = 0;
-                int t_g = 0;
-                int t_b = 0;
+            /* Apply blur on the bottom part of the image (10%) */
+            #pragma omp for collapse(2) private(k)
+            for (j = height * 0.9 + size; j < height - size; j++) {
+                for (k = size; k < width - size; k++) {
+                    int stencil_j, stencil_k;
+                    int t_r = 0;
+                    int t_g = 0;
+                    int t_b = 0;
 
-                for (stencil_j = -size; stencil_j <= size; stencil_j++) {
-                    for (stencil_k = -size; stencil_k <= size; stencil_k++) {
-                        t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
-                        t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
-                        t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                    for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                        for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                            t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                            t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                            t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                        }
                     }
-                }
 
-                new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                }
+            }
+
+            #pragma omp for collapse(2) private(k)
+            for (j = 1; j < height - 1; j++) {
+                for (k = 1; k < width - 1; k++) {
+
+                    float diff_r;
+                    float diff_g;
+                    float diff_b;
+
+                    diff_r = (new[CONV(j, k, width)].r - p[image_index][CONV(j, k, width)].r);
+                    diff_g = (new[CONV(j, k, width)].g - p[image_index][CONV(j, k, width)].g);
+                    diff_b = (new[CONV(j, k, width)].b - p[image_index][CONV(j, k, width)].b);
+
+                    if (diff_r > threshold || -diff_r > threshold
+                        ||
+                        diff_g > threshold || -diff_g > threshold
+                        ||
+                        diff_b > threshold || -diff_b > threshold
+                            ) {
+                        end = 0;
+                    }
+
+                    p[image_index][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
+                    p[image_index][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
+                    p[image_index][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+                }
             }
         }
-
-        for (j = 1; j < height - 1; j++) {
-            for (k = 1; k < width - 1; k++) {
-
-                float diff_r;
-                float diff_g;
-                float diff_b;
-
-                diff_r = (new[CONV(j, k, width)].r - p[image_index][CONV(j, k, width)].r);
-                diff_g = (new[CONV(j, k, width)].g - p[image_index][CONV(j, k, width)].g);
-                diff_b = (new[CONV(j, k, width)].b - p[image_index][CONV(j, k, width)].b);
-
-                if (diff_r > threshold || -diff_r > threshold
-                    ||
-                    diff_g > threshold || -diff_g > threshold
-                    ||
-                    diff_b > threshold || -diff_b > threshold
-                        ) {
-                    end = 0;
-                }
-
-                p[image_index][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
-                p[image_index][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
-                p[image_index][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
-            }
-        }
-
     } while (threshold > 0 && !end);
 
 #if SOBELF_DEBUG
@@ -742,59 +780,63 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
     width = image->width[image_index];
     height = image->height[image_index];
 
-    pixel* sobel;
+    pixel*sobel;
 
-    sobel = (pixel*)malloc(width * height * sizeof(pixel));
+    sobel = (pixel*) malloc(width * height * sizeof(pixel));
 
-    for (j = 1; j < height - 1; j++) {
-        for (k = 1; k < width - 1; k++) {
-            int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
-            int pixel_blue_so, pixel_blue_s, pixel_blue_se;
-            int pixel_blue_o, pixel_blue, pixel_blue_e;
+    #pragma omp parallel
+    {
+        #pragma omp for collapse(2) private(k)
+        for (j = 1; j < height - 1; j++) {
+            for (k = 1; k < width - 1; k++) {
+                int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
+                int pixel_blue_so, pixel_blue_s, pixel_blue_se;
+                int pixel_blue_o, pixel_blue, pixel_blue_e;
 
-            float deltaX_blue;
-            float deltaY_blue;
-            float val_blue;
+                float deltaX_blue;
+                float deltaY_blue;
+                float val_blue;
 
-            pixel_blue_no = p[image_index][CONV(j - 1, k - 1, width)].b;
-            pixel_blue_n = p[image_index][CONV(j - 1, k, width)].b;
-            pixel_blue_ne = p[image_index][CONV(j - 1, k + 1, width)].b;
-            pixel_blue_so = p[image_index][CONV(j + 1, k - 1, width)].b;
-            pixel_blue_s = p[image_index][CONV(j + 1, k, width)].b;
-            pixel_blue_se = p[image_index][CONV(j + 1, k + 1, width)].b;
-            pixel_blue_o = p[image_index][CONV(j, k - 1, width)].b;
-            pixel_blue = p[image_index][CONV(j, k, width)].b;
-            pixel_blue_e = p[image_index][CONV(j, k + 1, width)].b;
+                pixel_blue_no = p[image_index][CONV(j - 1, k - 1, width)].b;
+                pixel_blue_n  = p[image_index][CONV(j - 1, k, width)].b;
+                pixel_blue_ne = p[image_index][CONV(j - 1, k + 1, width)].b;
+                pixel_blue_so = p[image_index][CONV(j + 1, k - 1, width)].b;
+                pixel_blue_s  = p[image_index][CONV(j + 1, k, width)].b;
+                pixel_blue_se = p[image_index][CONV(j + 1, k + 1, width)].b;
+                pixel_blue_o  = p[image_index][CONV(j, k - 1, width)].b;
+                pixel_blue    = p[image_index][CONV(j, k, width)].b;
+                pixel_blue_e  = p[image_index][CONV(j, k + 1, width)].b;
 
-            deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so +
-                          pixel_blue_se;
+                deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so +
+                              pixel_blue_se;
 
-            deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n -
-                          pixel_blue_no;
+                deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n -
+                              pixel_blue_no;
 
-            val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
+                val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
 
 
-            if (val_blue > 50) {
-                sobel[CONV(j, k, width)].r = 255;
-                sobel[CONV(j, k, width)].g = 255;
-                sobel[CONV(j, k, width)].b = 255;
-            } else {
-                sobel[CONV(j, k, width)].r = 0;
-                sobel[CONV(j, k, width)].g = 0;
-                sobel[CONV(j, k, width)].b = 0;
+                if (val_blue > 50) {
+                            sobel[CONV(j, k, width)].r = 255;
+                    sobel[CONV(j, k, width)].g = 255;
+                    sobel[CONV(j, k, width)].b = 255;
+                } else {
+                    sobel[CONV(j, k, width)].r = 0;
+                    sobel[CONV(j, k, width)].g = 0;
+                    sobel[CONV(j, k, width)].b = 0;
+                }
+            }
+        }
+
+        #pragma omp for collapse(2) private(k)
+        for (j = 1; j < height - 1; j++) {
+            for (k = 1; k < width - 1; k++) {
+                p[image_index][CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
+                p[image_index][CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
+                p[image_index][CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
             }
         }
     }
-
-    for (j = 1; j < height - 1; j++) {
-        for (k = 1; k < width - 1; k++) {
-            p[image_index][CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
-            p[image_index][CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
-            p[image_index][CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
-        }
-    }
-
     free(sobel);
 
 
