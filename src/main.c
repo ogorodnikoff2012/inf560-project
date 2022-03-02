@@ -1152,8 +1152,13 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     if(rank == 0) {
-        printf("Number of MPI processes %d and number of omp threads %d\n", world_size, omp_get_num_threads());
+        #pragma omp parallel
+        {
+            if(omp_get_thread_num() == 0)
+                printf("Number of MPI processes %d and number of threads %d\n", world_size, omp_get_num_threads());
+        }
     }
+
 
     int ret_code;
 
