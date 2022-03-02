@@ -1,6 +1,6 @@
 #!/bin/bash
 
-make
+make -j8
 
 INPUT_DIR=images/original
 OUTPUT_DIR=images/processed
