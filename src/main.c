@@ -1151,6 +1151,10 @@ int main(int argc, char* argv[]) {
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+    if(rank == 0) {
+        printf("Number of MPI processes %d and number of omp threads %d\n", world_size, omp_get_num_threads());
+    }
+
     int ret_code;
 
     if (world_size == 1) {
