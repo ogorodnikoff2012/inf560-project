@@ -633,7 +633,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
     /* Perform at least one blur iteration */
     #pragma omp parallel default(shared)
     {
-        #pragma omp single
+        #pragma omp single nowait
         {
             do {
                 end = 1;
