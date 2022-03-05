@@ -13,6 +13,9 @@
 
 #include <mpi.h>
 
+#include <unistd.h>
+#include <limits.h>
+
 #include "gif_lib.h"
 
 /* Set this macro to 1 to enable debugging information */
