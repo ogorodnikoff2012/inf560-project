@@ -5,6 +5,7 @@
  */
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <math.h>
 #include <sys/time.h>
@@ -949,6 +950,16 @@ void prepare_pixel_datatype(MPI_Datatype* datatype) {
     MPI_Type_commit(datatype);
 }
 
+int slave_sync(void) {
+    int value;
+    MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    return value;
+}
+
+void master_sync(int value) {
+    MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
+}
+
 int slave_main(int argc, char* argv[]) {
     int rank;
     int world_size;
@@ -956,6 +967,10 @@ int slave_main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     animated_gif image;
+
+    if (!slave_sync()) {
+        return 1;
+    }
 
     /* First, we broadcast metadata */
     MPI_Bcast(&image.n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -1037,6 +1052,11 @@ void do_master_work(animated_gif* image) {
     int slave_signals[world_size];
     table_of_requests[0] = MPI_REQUEST_NULL;
 
+    bool slave_terminated[world_size];
+    for (int i = 0; i < world_size; ++i) {
+        slave_terminated[i] = false;
+    }
+
     MPI_Request processed_image_requests[image->n_images];
     int processed_images = 0;
     int sent_images = 0;
@@ -1064,6 +1084,7 @@ void do_master_work(animated_gif* image) {
             int next_image_index = -1;
             MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
+            slave_terminated[indx] = true;
         } else {
             MPI_Request req;
             int next_image_index = sent_images++;
@@ -1083,6 +1104,19 @@ void do_master_work(animated_gif* image) {
             MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
         }
     }
+
+    /* And terminate all slaves */
+    for (int i = 1; i < world_size; ++i) {
+        if (!slave_terminated[i]) {
+            MPI_Wait(table_of_requests + i, MPI_STATUS_IGNORE);
+
+            MPI_Request req;
+            int next_image_index = -1;
+            MPI_Isend(&next_image_index, 1, MPI_INT, i, kSignalTag, MPI_COMM_WORLD, &req);
+            MPI_Request_free(&req);
+            slave_terminated[i] = true;
+        }
+    }
 }
 
 int master_main(int argc, char* argv[]) {
@@ -1095,8 +1129,11 @@ int master_main(int argc, char* argv[]) {
     /* Check command-line arguments */
     if (argc < 3) {
         fprintf(stderr, "Usage: %s input.gif output.gif\n", argv[0]);
+        master_sync(0);
         return 1;
     }
+
+    master_sync(1);
 
     input_filename = argv[1];
     output_filename = argv[2];
