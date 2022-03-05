@@ -631,6 +631,112 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
 
 
     /* Perform at least one blur iteration */
+    #pragma omp parallel default(shared)
+    {
+        #pragma omp single
+        {
+            do {
+                end = 1;
+                n_iter++;
+
+                #pragma omp taskloop collapse(2) nogroup
+                for (j = 0; j < height - 1; j++) {
+                    for (k = 0; k < width - 1; k++) {
+                        new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                        new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                        new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+                    }
+                }
+
+                /* Apply blur on top part of image (10%) */
+                #pragma omp taskloop collapse(2) nogroup
+                for (j = size; j < height / 10 - size; j++) {
+                    for (k = size; k < width - size; k++) {
+                        int stencil_j, stencil_k;
+                        int t_r = 0;
+                        int t_g = 0;
+                        int t_b = 0;
+
+                        for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                            for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                                t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                                t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                                t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                            }
+                        }
+
+                        new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                        new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                        new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                    }
+                }
+
+                /* Copy the middle part of the image */
+                const int finish = height * 0.9 + size;
+                #pragma omp taskloop collapse(2) nogroup
+                for (j = height / 10 - size; j < finish; j++) {
+                    for (k = size; k < width - size; k++) {
+                        new[CONV(j, k, width)].r = p[image_index][CONV(j, k, width)].r;
+                        new[CONV(j, k, width)].g = p[image_index][CONV(j, k, width)].g;
+                        new[CONV(j, k, width)].b = p[image_index][CONV(j, k, width)].b;
+                    }
+                }
+
+                /* Apply blur on the bottom part of the image (10%) */
+                #pragma omp taskloop collapse(2) nogroup
+                for (j = height * 0.9 + size; j < height - size; j++) {
+                    for (k = size; k < width - size; k++) {
+                        int stencil_j, stencil_k;
+                        int t_r = 0;
+                        int t_g = 0;
+                        int t_b = 0;
+
+                        for (stencil_j = -size; stencil_j <= size; stencil_j++) {
+                            for (stencil_k = -size; stencil_k <= size; stencil_k++) {
+                                t_r += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].r;
+                                t_g += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].g;
+                                t_b += p[image_index][CONV(j + stencil_j, k + stencil_k, width)].b;
+                            }
+                        }
+
+                        new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                        new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                        new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                    }
+                }
+
+                #pragma omp taskloop collapse(2) nogroup
+                for (j = 1; j < height - 1; j++) {
+                    for (k = 1; k < width - 1; k++) {
+
+                        float diff_r;
+                        float diff_g;
+                        float diff_b;
+
+                        diff_r = (new[CONV(j, k, width)].r - p[image_index][CONV(j, k, width)].r);
+                        diff_g = (new[CONV(j, k, width)].g - p[image_index][CONV(j, k, width)].g);
+                        diff_b = (new[CONV(j, k, width)].b - p[image_index][CONV(j, k, width)].b);
+
+                        if (diff_r > threshold || -diff_r > threshold
+                            ||
+                            diff_g > threshold || -diff_g > threshold
+                            ||
+                            diff_b > threshold || -diff_b > threshold
+                                ) {
+                            end = 0;
+                        }
+
+                        p[image_index][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
+                        p[image_index][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
+                        p[image_index][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+                    }
+                }
+
+            } while (threshold > 0 && !end);
+        }
+    }
+
+    /*
     do {
         end = 1;
         n_iter++;
@@ -645,7 +751,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 }
             }
 
-            /* Apply blur on top part of image (10%) */
+            // Apply blur on top part of image (10%)
             #pragma omp for collapse(2) private(k)
             for (j = size; j < height / 10 - size; j++) {
                 for (k = size; k < width - size; k++) {
@@ -668,7 +774,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 }
             }
 
-            /* Copy the middle part of the image */
+            //Copy the middle part of the image
             const int finish = height * 0.9 + size;
             #pragma omp for collapse(2) private(k)
             for (j = height / 10 - size; j < finish; j++) {
@@ -679,7 +785,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 }
             }
 
-            /* Apply blur on the bottom part of the image (10%) */
+            // Apply blur on the bottom part of the image (10%)
             #pragma omp for collapse(2) private(k)
             for (j = height * 0.9 + size; j < height - size; j++) {
                 for (k = size; k < width - size; k++) {
@@ -730,6 +836,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
             }
         }
     } while (threshold > 0 && !end);
+    */
 
 #if SOBELF_DEBUG
     printf( "BLUR: number of iterations for image %d\n", n_iter ) ;
