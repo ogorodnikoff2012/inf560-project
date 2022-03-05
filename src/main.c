@@ -11,11 +11,13 @@
 #include <omp.h>
 
 #include <mpi.h>
+#include <cuda.h>
 
 #include "gif_lib.h"
 
 /* Set this macro to 1 to enable debugging information */
 #define SOBELF_DEBUG 0
+#define NUMBER_OF_STREAMS 16
 
 /* Represent one pixel from the image */
 typedef struct pixel {
@@ -25,6 +27,8 @@ typedef struct pixel {
 } pixel;
 
 MPI_Datatype kMPIPixelDatatype;
+
+cudaStream_t streams[NUMBER_OF_STREAMS];
 
 /* Represent one GIF image (animated or not */
 typedef struct animated_gif {
@@ -564,15 +568,15 @@ int store_pixels(char* filename, animated_gif* image) {
 
 void apply_gray_filter(animated_gif* image, int image_index) {
     int j;
-    pixel** p;
+    pixel* p;
+    int length = image->width[image_index] * image->height[image_index];
+    p = (image->p)[image_index];
 
-    p = image->p;
-
-    #pragma omp parallel for
-    for (j = 0; j < image->width[image_index] * image->height[image_index]; j++) {
+    #pragma omp target teams distribute parallel for map(p)
+    for (j = 0; j < length; j++) {
         int moy;
 
-        moy = (p[image_index][j].r + p[image_index][j].g + p[image_index][j].b) / 3;
+        moy = (p[j].r + p[j].g + p[j].b) / 3;
 
         if (moy < 0) {
             moy = 0;
@@ -582,9 +586,9 @@ void apply_gray_filter(animated_gif* image, int image_index) {
             moy = 255;
         }
 
-        p[image_index][j].r = moy;
-        p[image_index][j].g = moy;
-        p[image_index][j].b = moy;
+        p[j].r = moy;
+        p[j].g = moy;
+        p[j].b = moy;
     }
 }
 
@@ -1218,6 +1222,8 @@ int old_main(int argc, char* argv[]) {
  * Main entry point
  */
 int main(int argc, char* argv[]) {
+    int nbGPU;
+
     MPI_Init(&argc, &argv);
 
     prepare_pixel_datatype(&kMPIPixelDatatype);
@@ -1227,6 +1233,11 @@ int main(int argc, char* argv[]) {
 
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    if(world_size != 1) {
+        cudaGetDeviceCount(&nbGPU);
+        cudaSetDevice(rank % nbGPU);
+    }
 
     if(rank == 0) {
         #pragma omp parallel
