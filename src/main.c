@@ -88,8 +88,6 @@ animated_gif* load_pixels(char* filename) {
     }
 
     /* Fill the width and height */
-    /* TODO maybe parallel for? */
-    #pragma omp for
     for (i = 0; i < n_images; i++) {
         width[i] = g->SavedImages[i].ImageDesc.Width;
         height[i] = g->SavedImages[i].ImageDesc.Height;
@@ -133,7 +131,6 @@ animated_gif* load_pixels(char* filename) {
         return NULL;
     }
 
-    /* TODO parallel for? */
     for (i = 0; i < n_images; i++) {
         p[i] = (pixel*)malloc(width[i] * height[i] * sizeof(pixel));
 
@@ -147,44 +144,29 @@ animated_gif* load_pixels(char* filename) {
     /* Fill pixels */
 
     /* For each image */
-    int j;
+    for (i = 0; i < n_images; i++) {
+        int j;
 
-    bool success = true;
+        /* Get the local colormap if needed */
+        if (g->SavedImages[i].ImageDesc.ColorMap) {
 
-    #pragma omp parallel
-    {
-        #pragma omp for private(j)
-        for (i = 0; i < n_images; i++) {
+            /* TODO No support for local color map */
+            fprintf(stderr, "Error: application does not support local colormap\n");
+            return NULL;
 
-            /* Get the local colormap if needed */
-            if (g->SavedImages[i].ImageDesc.ColorMap) {
-
-                /* TODO No support for local color map */
-                #pragma omp critical
-                {
-                    fprintf(stderr, "Error: application does not support local colormap\n");
-                    success = false;
-                }
-                #pragma omp cancel for
-
-                colmap = g->SavedImages[i].ImageDesc.ColorMap;
-            }
-
-            /* Traverse the image and fill pixels */
-            for (j = 0; j < width[i] * height[i]; j++) {
-                int c;
-
-                c = g->SavedImages[i].RasterBits[j];
-
-                p[i][j].r = colmap->Colors[c].Red;
-                p[i][j].g = colmap->Colors[c].Green;
-                p[i][j].b = colmap->Colors[c].Blue;
-            }
+            colmap = g->SavedImages[i].ImageDesc.ColorMap;
         }
-    }
 
-    if (!success) {
-        return NULL;
+        /* Traverse the image and fill pixels */
+        for (j = 0; j < width[i] * height[i]; j++) {
+            int c;
+
+            c = g->SavedImages[i].RasterBits[j];
+
+            p[i][j].r = colmap->Colors[c].Red;
+            p[i][j].g = colmap->Colors[c].Green;
+            p[i][j].b = colmap->Colors[c].Blue;
+        }
     }
 
     /* Allocate image info */
@@ -548,41 +530,29 @@ int store_pixels(char* filename, animated_gif* image) {
 
     image->g->SColorMap = cmo;
 
-    bool success = true;
     /* Update the raster bits according to color map */
-    #pragma omp parallel
-    {
-        #pragma omp for private(j)
-        for (i = 0; i < image->n_images; i++) {
-            for (j = 0; j < image->width[i] * image->height[i]; j++) {
-                int found_index = -1;
+    for (i = 0; i < image->n_images; i++) {
+        for (j = 0; j < image->width[i] * image->height[i]; j++) {
+            int found_index = -1;
 
-                for (k = 0; k < n_colors; k++) {
-                    if (p[i][j].r == image->g->SColorMap->Colors[k].Red &&
-                        p[i][j].g == image->g->SColorMap->Colors[k].Green &&
-                        p[i][j].b == image->g->SColorMap->Colors[k].Blue) {
-                        found_index = k;
-                    }
+            for (k = 0; k < n_colors; k++) {
+                if (p[i][j].r == image->g->SColorMap->Colors[k].Red &&
+                    p[i][j].g == image->g->SColorMap->Colors[k].Green &&
+                    p[i][j].b == image->g->SColorMap->Colors[k].Blue) {
+                    found_index = k;
                 }
-
-                if (found_index == -1) {
-                    #pragma omp critical
-                    {
-                        fprintf(stderr,
-                                "Error: Unable to find a pixel in the color map\n");
-                        success = false;
-                    }
-                    #pragma omp cancel for
-                }
-
-                image->g->SavedImages[i].RasterBits[j] = found_index;
             }
+
+            if (found_index == -1) {
+                fprintf(stderr,
+                        "Error: Unable to find a pixel in the color map\n");
+                return 0;
+            }
+
+            image->g->SavedImages[i].RasterBits[j] = found_index;
         }
     }
 
-    if (!success) {
-        return 0;
-    }
 
     /* Write the final image */
     if (!output_modified_read_gif(filename, image->g)) {
