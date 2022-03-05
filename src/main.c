@@ -1250,6 +1250,11 @@ int old_main(int argc, char* argv[]) {
     return 0;
 }
 
+void report_hostname() {
+    char hostname[HOST_NAME_MAX + 1];
+    gethostname(hostname, HOST_NAME_MAX + 1);
+    printf("hostname: %s\n", hostname);
+}
 
 /*
  * Main entry point
@@ -1264,6 +1269,8 @@ int main(int argc, char* argv[]) {
 
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    // report_hostname();
 
     if(rank == 0) {
         #pragma omp parallel
