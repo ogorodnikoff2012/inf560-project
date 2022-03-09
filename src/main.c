@@ -573,7 +573,7 @@ void apply_gray_filter(animated_gif *image, int image_index) {
 
     p = (image->p)[image_index];
 
-#pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(static)
     for (j = 0; j < image->width[image_index] * image->height[image_index]; j++) {
         int moy;
 
@@ -642,7 +642,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
         n_iter++;
         #pragma omp parallel
         {
-            #pragma omp for collapse(2) schedule(static)
+            #pragma omp for collapse(2) private(j, k) schedule(static)
             for (j = 0; j < height - 1; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -652,7 +652,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
             /* Apply blur on top part of image (10%) */
-            #pragma omp for collapse(2) schedule(static)
+            #pragma omp for collapse(2) private(j, k) schedule(static)
             for (j = size; j < height / 10 - size; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
@@ -676,7 +676,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Copy the middle part of the image */
             const int finish = height * 0.9 + size;
-            #pragma omp for collapse(2) schedule(static)
+            #pragma omp for collapse(2) private(j, k) schedule(static)
             for (j = height / 10 - size; j < finish; j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -686,7 +686,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
             /* Apply blur on the bottom part of the image (10%) */
-            #pragma omp for collapse(2) schedule(static)
+            #pragma omp for collapse(2) private(j, k) schedule(static)
             for (j = height * 0.9 + size; j < height - size; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
@@ -708,7 +708,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                 }
             }
 
-            #pragma omp for collapse(2) schedule(static)
+            #pragma omp for collapse(2) private(j, k) schedule(static)
             for (j = 1; j < height - 1; j++) {
                 for (k = 1; k < width - 1; k++) {
 
@@ -759,9 +759,9 @@ void apply_sobel_filter(animated_gif *image, int image_index) {
 
     sobel = (pixel *) malloc(width * height * sizeof(pixel));
 
-#pragma omp parallel
+    #pragma omp parallel
     {
-#pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) private(j, k) schedule(static)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
@@ -803,7 +803,7 @@ void apply_sobel_filter(animated_gif *image, int image_index) {
             }
         }
 
-#pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) private(j, k) schedule(static)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
@@ -813,8 +813,6 @@ void apply_sobel_filter(animated_gif *image, int image_index) {
         }
     }
     free(sobel);
-
-
 }
 
 void apply_all_filters(animated_gif *image) {
