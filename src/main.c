@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
 #include <sys/time.h>
@@ -23,9 +24,9 @@
 
 /* Represent one pixel from the image */
 typedef struct pixel {
-    int r; /* Red */
-    int g; /* Green */
-    int b; /* Blue */
+    uint8_t r; /* Red */
+    uint8_t g; /* Green */
+    uint8_t b; /* Blue */
 } pixel;
 
 MPI_Datatype kMPIPixelDatatype;
@@ -943,7 +944,7 @@ void apply_all_filters(animated_gif* image) {
 void prepare_pixel_datatype(MPI_Datatype* datatype) {
     const int nitems = 3;
     int blocklengths[3] = {1, 1, 1};
-    MPI_Datatype types[3] = {MPI_INT, MPI_INT, MPI_INT};
+    MPI_Datatype types[3] = {MPI_UINT8_T, MPI_UINT8_T, MPI_UINT8_T};
     MPI_Aint offsets[3];
 
     offsets[0] = offsetof(pixel, r);
