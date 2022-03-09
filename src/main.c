@@ -644,8 +644,35 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
         n_iter++;
         #pragma omp parallel
         {
-            #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height) schedule(static)
-            for (j = 0; j < height - 1; j++) {
+            #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size) schedule(static) nowait
+            for (j = 0; j < size; j++) {
+                for (k = 0; k < width - 1; k++) {
+                    new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
+                }
+            }
+
+            #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size) schedule(static) nowait
+            for (j = size; j < height - size; j++) {
+                for (k = 0; k < size; k++) {
+                    new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
+                }
+            }
+
+            #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size) schedule(static) nowait
+            for (j = size; j < height - size; j++) {
+                for (k = width - size; k < width - 1; k++) {
+                    new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
+                }
+            }
+
+            #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size) schedule(static) nowait
+            for (j = height - size; j < height - 1; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -654,7 +681,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
             /* Apply blur on top part of image (10%) */
-            #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height) schedule(static)
+            #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height) schedule(static) nowait
             for (j = size; j < height / 10 - size; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
@@ -677,9 +704,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
             /* Copy the middle part of the image */
-            const int finish = height * 0.9 + size;
-            #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size) schedule(static)
-            for (j = height / 10 - size; j < finish; j++) {
+            #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size) schedule(static) nowait
+            for (j = height / 10 - size; j < height * 0.9 + size; j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -709,6 +735,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                     new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
                 }
             }
+
+            // Sync point
 
             #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold) schedule(static)
             for (j = 1; j < height - 1; j++) {
