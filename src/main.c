@@ -705,7 +705,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Copy the middle part of the image */
             #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size) schedule(static) nowait
-            for (j = height / 10 - size; j < height * 0.9 + size; j++) {
+            for (j = height / 10 - size; j < (int)(height * 0.9 + size); j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
