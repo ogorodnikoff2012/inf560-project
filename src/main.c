@@ -639,7 +639,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
     do {
         end = 1;
         n_iter++;
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(out:new) depend(in:p) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(out:new) depend(in:p)
         for (j = 0; j < height - 1; j++) {
             for (k = 0; k < width - 1; k++) {
                 new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -647,9 +647,8 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
             }
         }
-        #pragma omp taskwait
 
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p)
         for (j = size; j < height / 10 - size; j++) {
             for (k = size; k < width - size; k++) {
                 int stencil_j, stencil_k;
@@ -670,11 +669,10 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
             }
         }
-        #pragma omp taskwait
 
         /* Copy the middle part of the image */
         const int finish = height * 0.9 + size;
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p)
         for (j = height / 10 - size; j < finish; j++) {
             for (k = size; k < width - size; k++) {
                 new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -682,10 +680,9 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
             }
         }
-        #pragma omp taskwait
 
         /* Apply blur on the bottom part of the image (10%) */
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(inout:new) depend(in:p)
         for (j = height * 0.9 + size; j < height - size; j++) {
             for (k = size; k < width - size; k++) {
                 int stencil_j, stencil_k;
@@ -706,9 +703,8 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
             }
         }
-        #pragma omp taskwait
 
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(in:new) depend(out:p) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(in:new) depend(out:p)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
 
@@ -734,7 +730,6 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
             }
         }
-        #pragma omp taskwait
 
     } while (threshold > 0 && !end);
 
@@ -870,7 +865,7 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
 
     #pragma omp target data map(p, sobel)
     {
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(out:sobel) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(out:sobel)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
@@ -912,7 +907,7 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
             }
         }
 
-        #pragma omp target teams distribute parallel for simd collapse(2) depend(in:sobel) nowait
+        #pragma omp target teams distribute parallel for simd collapse(2) depend(in:sobel)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
@@ -921,7 +916,6 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
             }
         }
     }
-    #pragma omp taskwait
 
     /*
     #pragma omp parallel
