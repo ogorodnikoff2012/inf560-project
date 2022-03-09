@@ -34,10 +34,10 @@ MPI_Datatype kMPIPixelDatatype;
 /* Represent one GIF image (animated or not */
 typedef struct animated_gif {
     int n_images; /* Number of images */
-    int* width; /* Width of each image */
-    int* height; /* Height of each image */
-    pixel** p; /* Pixels of each image */
-    GifFileType* g; /* Internal representation.
+    int *width; /* Width of each image */
+    int *height; /* Height of each image */
+    pixel **p; /* Pixels of each image */
+    GifFileType *g; /* Internal representation.
                          DO NOT MODIFY */
 } animated_gif;
 
@@ -45,16 +45,16 @@ typedef struct animated_gif {
  * Load a GIF image from a file and return a
  * structure of type animated_gif.
  */
-animated_gif* load_pixels(char* filename) {
-    GifFileType* g;
-    ColorMapObject* colmap;
+animated_gif *load_pixels(char *filename) {
+    GifFileType *g;
+    ColorMapObject *colmap;
     int error;
     int n_images;
-    int* width;
-    int* height;
-    pixel** p;
+    int *width;
+    int *height;
+    pixel **p;
     int i;
-    animated_gif* image;
+    animated_gif *image;
 
     /* Open the GIF image (read mode) */
     g = DGifOpenFileName(filename, &error);
@@ -76,7 +76,7 @@ animated_gif* load_pixels(char* filename) {
     /* Grab the number of images and the size of each image */
     n_images = g->ImageCount;
 
-    width = (int*)malloc(n_images * sizeof(int));
+    width = (int *) malloc(n_images * sizeof(int));
 
     if (width == NULL) {
         fprintf(stderr, "Unable to allocate width of size %d\n",
@@ -84,7 +84,7 @@ animated_gif* load_pixels(char* filename) {
         return 0;
     }
 
-    height = (int*)malloc(n_images * sizeof(int));
+    height = (int *) malloc(n_images * sizeof(int));
 
     if (height == NULL) {
         fprintf(stderr, "Unable to allocate height of size %d\n",
@@ -128,7 +128,7 @@ animated_gif* load_pixels(char* filename) {
 #endif
 
     /* Allocate the array of pixels to be returned */
-    p = (pixel**)malloc(n_images * sizeof(pixel*));
+    p = (pixel **) malloc(n_images * sizeof(pixel *));
 
     if (p == NULL) {
         fprintf(stderr, "Unable to allocate array of %d images\n",
@@ -137,7 +137,7 @@ animated_gif* load_pixels(char* filename) {
     }
 
     for (i = 0; i < n_images; i++) {
-        p[i] = (pixel*)malloc(width[i] * height[i] * sizeof(pixel));
+        p[i] = (pixel *) malloc(width[i] * height[i] * sizeof(pixel));
 
         if (p[i] == NULL) {
             fprintf(stderr, "Unable to allocate %d-th array of %d pixels\n",
@@ -175,7 +175,7 @@ animated_gif* load_pixels(char* filename) {
     }
 
     /* Allocate image info */
-    image = (animated_gif*)malloc(sizeof(animated_gif));
+    image = (animated_gif *) malloc(sizeof(animated_gif));
 
     if (image == NULL) {
         fprintf(stderr, "Unable to allocate memory for animated_gif\n");
@@ -197,8 +197,8 @@ animated_gif* load_pixels(char* filename) {
     return image;
 }
 
-int output_modified_read_gif(char* filename, GifFileType* g) {
-    GifFileType* g2;
+int output_modified_read_gif(char *filename, GifFileType *g) {
+    GifFileType *g2;
     int error2;
 
 #if SOBELF_DEBUG
@@ -236,14 +236,14 @@ int output_modified_read_gif(char* filename, GifFileType* g) {
 }
 
 
-int store_pixels(char* filename, animated_gif* image) {
+int store_pixels(char *filename, animated_gif *image) {
     int n_colors = 0;
-    pixel** p;
+    pixel **p;
     int i, j, k;
-    GifColorType* colormap;
+    GifColorType *colormap;
 
     /* Initialize the new set of colors */
-    colormap = (GifColorType*)malloc(256 * sizeof(GifColorType));
+    colormap = (GifColorType *) malloc(256 * sizeof(GifColorType));
 
     if (colormap == NULL) {
         fprintf(stderr,
@@ -523,7 +523,7 @@ int store_pixels(char* filename, animated_gif* image) {
 #endif
 
     /* Change the color map inside the animated gif */
-    ColorMapObject* cmo;
+    ColorMapObject *cmo;
 
     cmo = GifMakeMapObject(n_colors, colormap);
 
@@ -567,13 +567,13 @@ int store_pixels(char* filename, animated_gif* image) {
     return 1;
 }
 
-void apply_gray_filter(animated_gif* image, int image_index) {
+void apply_gray_filter(animated_gif *image, int image_index) {
     int j;
-    pixel* p;
+    pixel *p;
 
     p = (image->p)[image_index];
 
-    #pragma omp parallel for
+    #pragma omp parallel for schedule(static)
     for (j = 0; j < image->width[image_index] * image->height[image_index]; j++) {
         int moy;
 
@@ -596,9 +596,9 @@ void apply_gray_filter(animated_gif* image, int image_index) {
 #define CONV(l, c, nb_c) \
     ((l)*(nb_c)+(c))
 
-void apply_gray_line(animated_gif* image) {
+void apply_gray_line(animated_gif *image) {
     int i, j, k;
-    pixel** p;
+    pixel **p;
 
     p = image->p;
 
@@ -613,14 +613,14 @@ void apply_gray_line(animated_gif* image) {
     }
 }
 
-void apply_blur_filter(animated_gif* image, int size, int threshold, int image_index) {
+void apply_blur_filter(animated_gif *image, int size, int threshold, int image_index) {
     int j, k;
     int width, height;
     int end = 0;
     int n_iter = 0;
 
-    pixel* p;
-    pixel* new;
+    pixel *p;
+    pixel *new;
 
     /* Get the pixels of all images */
     p = (image->p)[image_index];
@@ -632,19 +632,17 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
     height = image->height[image_index];
 
     /* Allocate array of new pixels */
-    new = (pixel*)malloc(width * height * sizeof(pixel));
+    new = (pixel *) malloc(width * height * sizeof(pixel));
 
 
     /* Perform at least one blur iteration */
-    #pragma omp parallel default(shared)
-    {
-        #pragma omp single nowait
-        {
-            do {
-                end = 1;
-                n_iter++;
 
-                #pragma omp taskloop collapse(2) nogroup
+        do {
+            end = 1;
+            n_iter++;
+            #pragma omp parallel
+            {
+                #pragma omp for collapse(2) schedule(static)
                 for (j = 0; j < height - 1; j++) {
                     for (k = 0; k < width - 1; k++) {
                         new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -654,7 +652,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 }
 
                 /* Apply blur on top part of image (10%) */
-                #pragma omp taskloop collapse(2) nogroup
+                #pragma omp for collapse(2) schedule(static)
                 for (j = size; j < height / 10 - size; j++) {
                     for (k = size; k < width - size; k++) {
                         int stencil_j, stencil_k;
@@ -678,7 +676,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
 
                 /* Copy the middle part of the image */
                 const int finish = height * 0.9 + size;
-                #pragma omp taskloop collapse(2) nogroup
+                #pragma omp for collapse(2) schedule(static)
                 for (j = height / 10 - size; j < finish; j++) {
                     for (k = size; k < width - size; k++) {
                         new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
@@ -688,7 +686,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                 }
 
                 /* Apply blur on the bottom part of the image (10%) */
-                #pragma omp taskloop collapse(2) nogroup
+                #pragma omp for collapse(2) schedule(static)
                 for (j = height * 0.9 + size; j < height - size; j++) {
                     for (k = size; k < width - size; k++) {
                         int stencil_j, stencil_k;
@@ -710,7 +708,7 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                     }
                 }
 
-                #pragma omp taskloop collapse(2) nogroup
+                #pragma omp for collapse(2) schedule(static)
                 for (j = 1; j < height - 1; j++) {
                     for (k = 1; k < width - 1; k++) {
 
@@ -736,9 +734,8 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
                         p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
                     }
                 }
-
-            } while (threshold > 0 && !end);
-        }
+            }
+        } while (threshold > 0 && !end);
     }
 #if SOBELF_DEBUG
     printf( "BLUR: number of iterations for image %d\n", n_iter ) ;
@@ -748,24 +745,24 @@ void apply_blur_filter(animated_gif* image, int size, int threshold, int image_i
 
 }
 
-void apply_sobel_filter(animated_gif* image, int image_index) {
+void apply_sobel_filter(animated_gif *image, int image_index) {
     int j, k;
     int width, height;
 
-    pixel* p;
+    pixel *p;
 
     p = (image->p)[image_index];
 
     width = image->width[image_index];
     height = image->height[image_index];
 
-    pixel*sobel;
+    pixel *sobel;
 
-    sobel = (pixel*) malloc(width * height * sizeof(pixel));
+    sobel = (pixel *) malloc(width * height * sizeof(pixel));
 
     #pragma omp parallel
     {
-        #pragma omp for collapse(2)
+        #pragma omp for collapse(2) schedule(static)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
@@ -777,14 +774,14 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
                 float val_blue;
 
                 pixel_blue_no = p[CONV(j - 1, k - 1, width)].b;
-                pixel_blue_n  = p[CONV(j - 1, k, width)].b;
+                pixel_blue_n = p[CONV(j - 1, k, width)].b;
                 pixel_blue_ne = p[CONV(j - 1, k + 1, width)].b;
                 pixel_blue_so = p[CONV(j + 1, k - 1, width)].b;
-                pixel_blue_s  = p[CONV(j + 1, k, width)].b;
+                pixel_blue_s = p[CONV(j + 1, k, width)].b;
                 pixel_blue_se = p[CONV(j + 1, k + 1, width)].b;
-                pixel_blue_o  = p[CONV(j, k - 1, width)].b;
-                pixel_blue    = p[CONV(j, k, width)].b;
-                pixel_blue_e  = p[CONV(j, k + 1, width)].b;
+                pixel_blue_o = p[CONV(j, k - 1, width)].b;
+                pixel_blue = p[CONV(j, k, width)].b;
+                pixel_blue_e = p[CONV(j, k + 1, width)].b;
 
                 deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so +
                               pixel_blue_se;
@@ -796,7 +793,7 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
 
 
                 if (val_blue > 50) {
-                            sobel[CONV(j, k, width)].r = 255;
+                    sobel[CONV(j, k, width)].r = 255;
                     sobel[CONV(j, k, width)].g = 255;
                     sobel[CONV(j, k, width)].b = 255;
                 } else {
@@ -807,7 +804,7 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
             }
         }
 
-        #pragma omp for collapse(2)
+        #pragma omp for collapse(2) schedule(static)
         for (j = 1; j < height - 1; j++) {
             for (k = 1; k < width - 1; k++) {
                 p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
@@ -821,7 +818,7 @@ void apply_sobel_filter(animated_gif* image, int image_index) {
 
 }
 
-void apply_all_filters(animated_gif* image) {
+void apply_all_filters(animated_gif *image) {
     for (int i = 0; i < image->n_images; ++i) {
         // Convert the pixels into grayscale
         apply_gray_filter(image, i);
@@ -838,7 +835,7 @@ void apply_all_filters(animated_gif* image) {
     }
 }
 
-void prepare_pixel_datatype(MPI_Datatype* datatype) {
+void prepare_pixel_datatype(MPI_Datatype *datatype) {
     const int nitems = 3;
     int blocklengths[3] = {1, 1, 1};
     MPI_Datatype types[3] = {MPI_UINT8_T, MPI_UINT8_T, MPI_UINT8_T};
@@ -861,7 +858,7 @@ void master_sync(int value) {
     MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
 }
 
-int slave_main(int argc, char* argv[]) {
+int slave_main(int argc, char *argv[]) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -878,7 +875,7 @@ int slave_main(int argc, char* argv[]) {
 
     image.width = calloc(image.n_images, sizeof(int));
     image.height = calloc(image.n_images, sizeof(int));
-    image.p = calloc(image.n_images, sizeof(pixel*));
+    image.p = calloc(image.n_images, sizeof(pixel *));
 
     MPI_Bcast(image.width, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(image.height, image.n_images, MPI_INT, 0, MPI_COMM_WORLD);
@@ -935,7 +932,7 @@ int slave_main(int argc, char* argv[]) {
     return 0;
 }
 
-void do_master_work(animated_gif* image) {
+void do_master_work(animated_gif *image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1020,10 +1017,10 @@ void do_master_work(animated_gif* image) {
     }
 }
 
-int master_main(int argc, char* argv[]) {
-    char* input_filename;
-    char* output_filename;
-    animated_gif* image;
+int master_main(int argc, char *argv[]) {
+    char *input_filename;
+    char *output_filename;
+    animated_gif *image;
     struct timeval t1, t2;
     double duration;
 
@@ -1087,10 +1084,10 @@ int master_main(int argc, char* argv[]) {
     return 0;
 }
 
-int old_main(int argc, char* argv[]) {
-    char* input_filename;
-    char* output_filename;
-    animated_gif* image;
+int old_main(int argc, char *argv[]) {
+    char *input_filename;
+    char *output_filename;
+    animated_gif *image;
     struct timeval t1, t2;
     double duration;
 
@@ -1160,7 +1157,7 @@ void report_hostname() {
 /*
  * Main entry point
  */
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
 
     prepare_pixel_datatype(&kMPIPixelDatatype);
@@ -1173,10 +1170,10 @@ int main(int argc, char* argv[]) {
 
     // report_hostname();
 
-    if(rank == 0) {
-        #pragma omp parallel
+    if (rank == 0) {
+#pragma omp parallel
         {
-            if(omp_get_thread_num() == 0)
+            if (omp_get_thread_num() == 0)
                 printf("Number of MPI processes %d and number of threads %d\n", world_size, omp_get_num_threads());
         }
     }
