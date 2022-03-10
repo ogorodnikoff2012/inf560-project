@@ -22,12 +22,16 @@
 /* Set this macro to 1 to enable debugging information */
 #define SOBELF_DEBUG 0
 
+
 /* Represent one pixel from the image */
 typedef struct pixel {
     uint8_t r; /* Red */
     uint8_t g; /* Green */
     uint8_t b; /* Blue */
 } pixel;
+
+extern void allocate_device_MPI_process(int rank);
+extern void blur_filter_cuda(int omprank, int size, pixel* p, int j, int k, int width);
 
 MPI_Datatype kMPIPixelDatatype;
 
@@ -770,6 +774,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                         }
                     }
 
+                    blur_filter_cuda(omp_get_thread_num(), size, p, j, k; width);
+
                     new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
                     new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
                     new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
@@ -778,8 +784,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Copy the middle part of the image */
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size, s_info) schedule(static) nowait
-            for (j = max(height / 10 - size, s_info->min_row); j < min((int)(height * 0.9 + size), s_info->max_row);
-            j++) {
+            for (j = max(height / 10 - size, s_info->min_row); j < min((int) (height * 0.9 + size), s_info->max_row);
+                 j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -789,7 +795,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Apply blur on the bottom part of the image (10%) */
 #pragma omp for collapse(2) private(j, k) firstprivate(width, height, new, p, size, s_info) schedule(static)
-            for (j = max((int)(height * 0.9 + size), s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = max((int) (height * 0.9 + size), s_info->min_row); j < min(height - size, s_info->max_row); j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
                     int t_r = 0;
@@ -837,11 +843,12 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                     p[CONV(j, k, width)].g = new[CONV(j, k, width)].g;
                     p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
                 }
-            }
-        }
 
-        if (!s_info->single_mode) {
-            synchronize_bool_and(&end, s_info);
+            }
+
+            if (!s_info->single_mode) {
+                synchronize_bool_and(&end, s_info);
+            }
         }
     } while (threshold > 0 && !end);
 #if SOBELF_DEBUG
@@ -849,7 +856,6 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 #endif
 
     free(new);
-
 }
 
 void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_info) {
@@ -1358,6 +1364,8 @@ void report_hostname() {
  * Main entry point
  */
 int main(int argc, char *argv[]) {
+    int nbGPU, deviceUsed;
+
     MPI_Init(&argc, &argv);
 
     prepare_pixel_datatype(&kMPIPixelDatatype);
@@ -1367,6 +1375,10 @@ int main(int argc, char *argv[]) {
 
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    if(world_size > 1) {
+        allocate_device_MPI_process(rank);
+    }
 
     // report_hostname();
 
