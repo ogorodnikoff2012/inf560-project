@@ -572,6 +572,7 @@ typedef struct striping_info {
     int single_mode;
     int top_neighbour_id;
     int bottom_neighbour_id;
+    int stripe_count;
 } striping_info;
 
 typedef enum striping_mpi_tag {
@@ -665,17 +666,14 @@ void synchronize_bool_and(int* var, striping_info* s_info) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int world_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
     if (rank == 0) {
-        for (int slave = 1; slave < world_size; ++slave) {
+        for (int slave = 1; slave < s_info->stripe_count; ++slave) {
             int value;
             MPI_Recv(&value, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
             *var &= value;
         }
 
-        for (int slave = 1; slave < world_size; ++slave) {
+        for (int slave = 1; slave < s_info->stripe_count; ++slave) {
             MPI_Send(var, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
         }
     } else {
@@ -930,21 +928,15 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
 
 #define BLUR_RADIUS (5)
 
-void apply_all_filters(animated_gif *image, striping_info* s_info) {
-    for (int i = 0; i < image->n_images; ++i) {
-        // Convert the pixels into grayscale
-        apply_gray_filter(image, i, s_info);
-    }
+void apply_all_filters(animated_gif *image, int image_idx, striping_info* s_info) {
+    // Convert the pixels into grayscale
+    apply_gray_filter(image, image_idx, s_info);
 
-    for (int i = 0; i < image->n_images; ++i) {
-        // Apply blur filter with convergence value
-        apply_blur_filter(image, BLUR_RADIUS, 20, i, s_info);
-    }
+    // Apply blur filter with convergence value
+    apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
 
-    for (int i = 0; i < image->n_images; ++i) {
-        // Apply sobel filter on pixels
-        apply_sobel_filter(image, i, s_info);
-    }
+    // Apply sobel filter on pixels
+    apply_sobel_filter(image, image_idx, s_info);
 }
 
 void prepare_pixel_datatype(MPI_Datatype *datatype) {
@@ -992,14 +984,15 @@ void master_broadcast_metadata(animated_gif* image) {
 }
 
 int slave_receive_stripe_info(striping_info* s_info) {
-    int metadata_header[6];
-    MPI_Recv(metadata_header, 6, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    int metadata_header[7];
+    MPI_Recv(metadata_header, 7, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
     s_info->min_row             = metadata_header[1];
     s_info->max_row             = metadata_header[2];
     s_info->single_mode         = metadata_header[3];
     s_info->top_neighbour_id    = metadata_header[4];
     s_info->bottom_neighbour_id = metadata_header[5];
+    s_info->stripe_count        = metadata_header[6];
 
     return metadata_header[0];
 }
@@ -1080,15 +1073,15 @@ int slave_main(int argc, char *argv[]) {
         MPI_Recv(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
                  image_index, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        /* Convert the pixels into grayscale */
-        apply_gray_filter(&image, image_index);
+        striping_info s_info;
+        s_info.single_mode = 1;
+        s_info.min_row = 0;
+        s_info.max_row = image.height[image_index];
+        s_info.top_neighbour_id = -1;
+        s_info.bottom_neighbour_id = -1;
+        s_info.stripe_count = 1;
 
-        /* Apply blur filter with convergence value */
-        apply_blur_filter(&image, 5, 20, image_index);
-
-        /* Apply sobel filter on pixels */
-        apply_sobel_filter(&image, image_index);
-
+        apply_all_filters(&image, image_index, &s_info);
 
         MPI_Request req;
         MPI_Isend(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, &req);
@@ -1223,6 +1216,7 @@ int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
     }
 
     for (int i = 0; i < stripe_count; ++i) {
+        s_info[i].stripe_count = stripe_count;
         if (i > 0) {
             s_info[i].top_neighbour_id = i - 1;
         }
@@ -1235,16 +1229,17 @@ int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
 }
 
 void master_send_stripe(int used, int slave_rank, pixel* p, int width, int height, striping_info* s_info) {
-    int metadata_header[6];
+    int metadata_header[7];
     metadata_header[0] = used;
     metadata_header[1] = s_info->min_row;
     metadata_header[2] = s_info->max_row;
     metadata_header[3] = s_info->single_mode;
     metadata_header[4] = s_info->top_neighbour_id;
     metadata_header[5] = s_info->bottom_neighbour_id;
+    metadata_header[6] = s_info->stripe_count;
 
     MPI_Request req;
-    MPI_Isend(metadata_header, 6, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &req);
+    MPI_Isend(metadata_header, 7, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &req);
     MPI_Request_free(&req);
 
     if (!used) { return; }
@@ -1411,7 +1406,17 @@ int old_main(int argc, char *argv[]) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    apply_all_filters(image);
+    for (int i = 0; i < image->n_images; ++i) {
+        striping_info s_info;
+        s_info.single_mode = 1;
+        s_info.min_row = 0;
+        s_info.max_row = image->height[i];
+        s_info.top_neighbour_id = -1;
+        s_info.bottom_neighbour_id = -1;
+        s_info.stripe_count = 1;
+
+        apply_all_filters(image, i, &s_info);
+    }
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);
