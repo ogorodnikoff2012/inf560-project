@@ -1296,6 +1296,17 @@ void do_master_work_striping(animated_gif* image) {
         striping_info s_info[world_size];
         int stripe_count = prepare_stripe_info(height, world_size, s_info);
 
+        for (int i = 0; i < world_size; ++i) {
+            printf("s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d} ",
+                   s_info[i].min_row,
+                   s_info[i].max_row,
+                   s_info[i].single_mode,
+                   s_info[i].top_neighbour_id,
+                   s_info[i].bottom_neighbour_id,
+                   s_info[i].stripe_count);
+        }
+        printf("\n");
+
         // Send stripes
 
         for (int i = 1; i < world_size; ++i) {
