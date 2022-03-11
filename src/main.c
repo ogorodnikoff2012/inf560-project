@@ -598,7 +598,7 @@ void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_in
         for (col = 0; col < width; ++col) {
             int moy;
 
-            moy = (p[j].r + p[j].g + p[j].b) / 3;
+            moy = (p[CONV(row, col, width)].r + p[CONV(row, col, width)].g + p[CONV(row, col, width)].b) / 3;
 
             if (moy < 0) {
                 moy = 0;
@@ -608,9 +608,9 @@ void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_in
                 moy = 255;
             }
 
-            p[j].r = moy;
-            p[j].g = moy;
-            p[j].b = moy;
+            p[CONV(row, col, width)].r = moy;
+            p[CONV(row, col, width)].g = moy;
+            p[CONV(row, col, width)].b = moy;
         }
     }
 }
@@ -658,7 +658,7 @@ void synchronize_rows(pixel* p, int width, int height, int row_count, striping_i
 
 #undef TOP_RECV
 #undef TOP_SEND
-#indef BTM_RECV
+#undef BTM_RECV
 #undef BTM_SEND
 }
 
@@ -669,7 +669,7 @@ void synchronize_bool_and(int* var, striping_info* s_info) {
     if (rank == 0) {
         for (int slave = 1; slave < s_info->stripe_count; ++slave) {
             int value;
-            MPI_Recv(&value, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
+            MPI_Recv(&value, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             *var &= value;
         }
 
@@ -678,8 +678,16 @@ void synchronize_bool_and(int* var, striping_info* s_info) {
         }
     } else {
         MPI_Send(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
-        MPI_Recv(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
+        MPI_Recv(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
+}
+
+static inline int min(int x, int y) {
+    return x < y ? x : y;
+}
+
+static inline int max(int x, int y) {
+    return x < y ? y : x;
 }
 
 void apply_blur_filter(animated_gif *image, int size, int threshold, int image_index, striping_info* s_info) {
@@ -966,7 +974,7 @@ void master_sync(int value) {
 #define WORK_MODE_LEGACY   (1)
 #define WORK_MODE_STRIPING (2)
 
-void slave_broadcast_metadata(animateg_gif* image) {
+void slave_broadcast_metadata(animated_gif* image) {
     MPI_Bcast(&image->n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     image->width = calloc(image->n_images, sizeof(int));
@@ -1004,8 +1012,8 @@ void slave_receive_stripe(pixel* p, int width, int height, striping_info* s_info
 }
 
 void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
-    int row_count = s_info[i].max_row - s_info[i].min_row;
-    MPI_Send(p + CONV(s_info[i].min_row, 0, width), width * row_count, kMPIPixelDatatype,
+    int row_count = s_info->max_row - s_info->min_row;
+    MPI_Send(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
              0, DATA_TAG, MPI_COMM_WORLD);
 }
 
@@ -1252,7 +1260,7 @@ void master_send_stripe(int used, int slave_rank, pixel* p, int width, int heigh
 
 void master_receive_stripes(pixel* p, int width, int height, striping_info* s_info, int stripe_count) {
     MPI_Request requests[stripe_count];
-    reuqests[0] = MPI_REQUEST_NULL;
+    requests[0] = MPI_REQUEST_NULL;
 
     for (int i = 1; i < stripe_count; ++i) {
         int row_count = s_info[i].max_row - s_info[i].min_row;
