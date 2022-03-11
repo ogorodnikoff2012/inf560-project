@@ -1028,11 +1028,18 @@ int slave_striping(animated_gif* image) {
         int has_work = slave_receive_stripe_info(&s_info);
         if (!has_work) { continue; }
 
-        pixel* p = image->p[image_idx];
+        pixel* p = image->p[image_idx] = calloc(image.width[image_index] * image.height[image_index], sizeof(pixel));
         slave_receive_stripe(p, width, height, &s_info);
         apply_all_filters(image, image_idx, &s_info);
         slave_send_stripe(p, width, height, &s_info);
+        free(p);
     }
+
+    free(image->width);
+    free(image->height);
+    free(image.p);
+
+    return 0;
 }
 
 int slave_main(int argc, char *argv[]) {
