@@ -235,7 +235,6 @@ int output_modified_read_gif(char *filename, GifFileType *g) {
     return 1;
 }
 
-
 int store_pixels(char *filename, animated_gif *image) {
     int n_colors = 0;
     pixel **p;
@@ -570,10 +569,17 @@ int store_pixels(char *filename, animated_gif *image) {
 typedef struct striping_info {
     int min_row;
     int max_row;
-    bool single_mode;
+    int single_mode;
     int top_neighbour_id;
-    int bottom_neigbour_id;
+    int bottom_neighbour_id;
 } striping_info;
+
+typedef enum striping_mpi_tag {
+    TOP_TO_BTM_TAG,
+    BTM_TO_TOP_TAG,
+    SIGNAL_TAG,
+    DATA_TAG,
+} striping_mpi_tag;
 
 #define CONV(l, c, nb_c) \
     ((l)*(nb_c)+(c))
@@ -631,9 +637,6 @@ void synchronize_rows(pixel* p, int width, int height, int row_count, striping_i
 #define BTM_RECV 2
 #define BTM_SEND 3
 
-#define TOP_TO_BTM_TAG 0
-#define BTM_TO_TOP_TAG 1
-
     MPI_Request requests[] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
     if (s_info->top_neighbour_id != -1) {
@@ -656,8 +659,6 @@ void synchronize_rows(pixel* p, int width, int height, int row_count, striping_i
 #undef TOP_SEND
 #indef BTM_RECV
 #undef BTM_SEND
-#undef TOP_TO_BTM_TAG
-#undef BTM_TO_TOP_TAG
 }
 
 void synchronize_bool_and(int* var, striping_info* s_info) {
@@ -670,16 +671,16 @@ void synchronize_bool_and(int* var, striping_info* s_info) {
     if (rank == 0) {
         for (int slave = 1; slave < world_size; ++slave) {
             int value;
-            MPI_Recv(&value, 1, MPI_INT, slave, 0, MPI_COMM_WORLD);
+            MPI_Recv(&value, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
             *var &= value;
         }
 
         for (int slave = 1; slave < world_size; ++slave) {
-            MPI_Send(var, 1, MPI_INT, slave, 0, MPI_COMM_WORLD);
+            MPI_Send(var, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
         }
     } else {
-        MPI_Send(var, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-        MPI_Recv(var, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        MPI_Send(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
+        MPI_Recv(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
     }
 }
 
@@ -990,9 +991,47 @@ void master_broadcast_metadata(animated_gif* image) {
     MPI_Bcast(image->height, image->n_images, MPI_INT, 0, MPI_COMM_WORLD);
 }
 
+int slave_receive_stripe_info(striping_info* s_info) {
+    int metadata_header[6];
+    MPI_Recv(metadata_header, 6, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    s_info->min_row             = metadata_header[1];
+    s_info->max_row             = metadata_header[2];
+    s_info->single_mode         = metadata_header[3];
+    s_info->top_neighbour_id    = metadata_header[4];
+    s_info->bottom_neighbour_id = metadata_header[5];
+
+    return metadata_header[0];
+}
+
+void slave_receive_stripe(pixel* p, int width, int height, striping_info* s_info) {
+    int row_count = s_info->max_row - s_info->min_row;
+    MPI_Recv(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+             0, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
+void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
+    int row_count = s_info[i].max_row - s_info[i].min_row;
+    MPI_Send(p + CONV(s_info[i].min_row, 0, width), width * row_count, kMPIPixelDatatype,
+             0, DATA_TAG, MPI_COMM_WORLD);
+}
+
 int slave_striping(animated_gif* image) {
     slave_broadcast_metadata(image);
-    .....
+
+    for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
+        int width = image->width[image_idx];
+        int height = image->height[image_idx];
+
+        striping_info s_info;
+        int has_work = slave_receive_stripe_info(&s_info);
+        if (!has_work) { continue; }
+
+        pixel* p = image->p[image_idx];
+        slave_receive_stripe(p, width, height, &s_info);
+        apply_all_filters(image, image_idx, &s_info);
+        slave_send_stripe(p, width, height, &s_info);
+    }
 }
 
 int slave_main(int argc, char *argv[]) {
@@ -1081,6 +1120,8 @@ void do_master_work_legacy(animated_gif *image) {
 
     const int kSignalTag = image->n_images;
 
+    printf("Working mode: legacy\n");
+
     /* First, we broadcast metadata */
     master_broadcast_metadata(image);
 
@@ -1156,11 +1197,84 @@ void do_master_work_legacy(animated_gif *image) {
     }
 }
 
+int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
+    int last_max_row = 0;
+    int stripe_count = 0;
+    while (last_max_row < height) {
+        int stripe_height = max((height + world_size - 1) / world_size, BLUR_RADIUS);
+
+        int min_row = last_max_row;
+        int max_row = min_row + stripe_height;
+        if (height - max_row < BLUR_RADIUS) {
+            max_row = height;
+        }
+        if (max_row > height) {
+            max_row = height;
+        }
+
+        s_info[stripe_count].min_row = min_row;
+        s_info[stripe_count].max_row = max_row;
+        s_info[stripe_count].single_mode = false;
+        s_info[stripe_count].top_neighbour_id = -1;
+        s_info[stripe_count].bottom_neighbour_id = -1;
+
+        ++stripe_count;
+        last_max_row = max_row;
+    }
+
+    for (int i = 0; i < stripe_count; ++i) {
+        if (i > 0) {
+            s_info[i].top_neighbour_id = i - 1;
+        }
+        if (i < stripe_count - 1) {
+            s_info[i].bottom_neighbour_id = i + 1;
+        }
+    }
+
+    return stripe_count;
+}
+
+void master_send_stripe(int used, int slave_rank, pixel* p, int width, int height, striping_info* s_info) {
+    int metadata_header[6];
+    metadata_header[0] = used;
+    metadata_header[1] = s_info->min_row;
+    metadata_header[2] = s_info->max_row;
+    metadata_header[3] = s_info->single_mode;
+    metadata_header[4] = s_info->top_neighbour_id;
+    metadata_header[5] = s_info->bottom_neighbour_id;
+
+    MPI_Request req;
+    MPI_Isend(metadata_header, 6, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &req);
+    MPI_Request_free(&req);
+
+    if (!used) { return; }
+
+    int row_count = s_info->max_row - s_info->min_row;
+    MPI_Isend(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+              slave_rank, DATA_TAG, MPI_COMM_WORLD, &req);
+    MPI_Request_free(&req);
+}
+
+void master_receive_stripes(pixel* p, int width, int height, striping_info* s_info, int stripe_count) {
+    MPI_Request requests[stripe_count];
+    reuqests[0] = MPI_REQUEST_NULL;
+
+    for (int i = 1; i < stripe_count; ++i) {
+        int row_count = s_info[i].max_row - s_info[i].min_row;
+        MPI_Irecv(p + CONV(s_info[i].min_row, 0, width), width * row_count, kMPIPixelDatatype,
+                  i, DATA_TAG, MPI_COMM_WORLD, &requests[i]);
+    }
+
+    MPI_Waitall(stripe_count, requests, MPI_STATUSES_IGNORE);
+}
+
 void do_master_work_striping(animated_gif* image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    printf("Working mode: striping\n");
 
     /* First, we broadcast metadata */
     master_broadcast_metadata(image);
@@ -1169,42 +1283,18 @@ void do_master_work_striping(animated_gif* image) {
         int width = image->width[image_idx];
         int height = image->height[image_idx];
 
-        stripe_info s_info[world_size];
-        int stripe_count = 0;
+        striping_info s_info[world_size];
+        int stripe_count = prepare_stripe_info(height, world_size, s_info);
 
-        int last_max_row = 0;
-        while (last_max_row < height) {
-            int stripe_height = max((height + world_size - 1) / world_size, BLUR_RADIUS);
+        // Send stripes
 
-            int min_row = last_max_row;
-            int max_row = min_row + stripe_height;
-            if (height - max_row < BLUR_RADIUS) {
-                max_row = height;
-            }
-            if (max_row > height) {
-                max_row = height;
-            }
-
-            s_info[stripe_count].min_row = min_row;
-            s_info[stripe_count].max_row = max_row;
-            s_info[stripe_count].single_mode = false;
-            s_info[stripe_count].top_neighbour = -1;
-            s_info[stripe_count].bottom_neighbour = -1;
-
-            ++stripe_count;
-            last_max_row = max_row;
+        for (int i = 1; i < world_size; ++i) {
+            master_send_stripe(i < stripe_count, i, image->p[image_idx], width, height, &s_info[i]);
         }
 
-        for (int i = 0; i < stripe_count; ++i) {
-            if (i > 0) {
-                s_info[i].top_neighbour = i - 1;
-            }
-            if (i < stripe_count - 1) {
-                s_info[i].bottom_neighbour = i + 1;
-            }
-        }
+        apply_all_filters(image, image_idx, &s_info[0]);
 
-        // TODO FINISH
+        master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
     }
 }
 
