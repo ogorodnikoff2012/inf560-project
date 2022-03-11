@@ -1028,7 +1028,7 @@ int slave_striping(animated_gif* image) {
         int has_work = slave_receive_stripe_info(&s_info);
         if (!has_work) { continue; }
 
-        pixel* p = image->p[image_idx] = calloc(image.width[image_index] * image.height[image_index], sizeof(pixel));
+        pixel* p = image->p[image_idx] = calloc(image.width[image_idx] * image.height[image_idx], sizeof(pixel));
         slave_receive_stripe(p, width, height, &s_info);
         apply_all_filters(image, image_idx, &s_info);
         slave_send_stripe(p, width, height, &s_info);
@@ -1037,7 +1037,7 @@ int slave_striping(animated_gif* image) {
 
     free(image->width);
     free(image->height);
-    free(image.p);
+    free(image->p);
 
     return 0;
 }
