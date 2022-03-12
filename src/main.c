@@ -30,6 +30,7 @@ typedef struct pixel {
 } pixel;
 
 MPI_Datatype kMPIPixelDatatype;
+MPI_Datatype kMPIStripingInfoDatatype;
 
 /* Represent one GIF image (animated or not */
 typedef struct animated_gif {
@@ -960,6 +961,28 @@ void prepare_pixel_datatype(MPI_Datatype *datatype) {
     MPI_Type_commit(datatype);
 }
 
+void prapare_striping_info_datatype(MPI_Datatype* datatype) {
+    const int nitems = 6;
+    int blocklengths[6] = {1, 1, 1, 1, 1, 1};
+    MPI_Datatype types[6] = {MPI_INT, MPI_INT, MPI_INT, MPI_INT, MPI_INT, MPI_INT};
+    MPI_Aint offsets[6];
+
+    offsets[0] = offsetof(striping_info, min_row);
+    offsets[1] = offsetof(striping_info, max_row);
+    offsets[2] = offsetof(striping_info, single_mode);
+    offsets[3] = offsetof(striping_info, top_neighbour_id);
+    offsets[4] = offsetof(striping_info, bottom_neighbour_id);
+    offsets[5] = offsetof(striping_info, stripe_count);
+
+    MPI_Type_create_struct(nitems, blocklengths, offsets, types, datatype);
+    MPI_Type_commit(datatype);
+}
+
+void prepare_datatypes() {
+    prepare_pixel_datatype(&kMPIPixelDatatype);
+    prapare_striping_info_datatype(&kMPIStripingInfoDatatype);
+}
+
 int slave_sync(void) {
     int value;
     MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -992,27 +1015,20 @@ void master_broadcast_metadata(animated_gif* image) {
 }
 
 int slave_receive_stripe_info(striping_info* s_info) {
-    int metadata_header[7];
-    MPI_Recv(metadata_header, 7, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-    s_info->min_row             = metadata_header[1];
-    s_info->max_row             = metadata_header[2];
-    s_info->single_mode         = metadata_header[3];
-    s_info->top_neighbour_id    = metadata_header[4];
-    s_info->bottom_neighbour_id = metadata_header[5];
-    s_info->stripe_count        = metadata_header[6];
+    MPI_Recv(s_info, 1, kMPIStripingInfoDatatype, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    int used = s_info->max_row >= 0 ? 1 : 0;
 
     printf("SLAVE  ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
-           metadata_header[0],
-           metadata_header[1],
-           metadata_header[2],
-           metadata_header[3],
-           metadata_header[4],
-           metadata_header[5],
-           metadata_header[6]
+           used,
+           s_info->min_row,
+           s_info->max_row,
+           s_info->single_mode,
+           s_info->top_neighbour_id,
+           s_info->bottom_neighbour_id,
+           s_info->stripe_count
     );
 
-    return metadata_header[0];
+    return used;
 }
 
 void slave_receive_stripe(pixel* p, int width, int height, striping_info* s_info) {
@@ -1216,6 +1232,10 @@ void do_master_work_legacy(animated_gif *image) {
 }
 
 int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
+    for (int i = 0; i < world_size; ++i) {
+        s_info[i].max_row = -1;
+    }
+
     int last_max_row = 0;
     int stripe_count = 0;
     while (last_max_row < height) {
@@ -1253,28 +1273,19 @@ int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
     return stripe_count;
 }
 
-void master_send_stripe(int used, int slave_rank, pixel* p, int width, int height, striping_info* s_info,
-                        MPI_Request* requests) {
-    int metadata_header[7];
-    metadata_header[0] = used;
-    metadata_header[1] = s_info->min_row;
-    metadata_header[2] = s_info->max_row;
-    metadata_header[3] = s_info->single_mode;
-    metadata_header[4] = s_info->top_neighbour_id;
-    metadata_header[5] = s_info->bottom_neighbour_id;
-    metadata_header[6] = s_info->stripe_count;
-
+void master_send_stripe(int slave_rank, pixel* p, int width, int height, striping_info* s_info, MPI_Request* requests) {
+    int used = s_info->max_row >= 0 ? 1 : 0;
     printf("MASTER ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
-           metadata_header[0],
-           metadata_header[1],
-           metadata_header[2],
-           metadata_header[3],
-           metadata_header[4],
-           metadata_header[5],
-           metadata_header[6]
+        used,
+        s_info->min_row,
+        s_info->max_row,
+        s_info->single_mode,
+        s_info->top_neighbour_id,
+        s_info->bottom_neighbour_id,
+        s_info->stripe_count
     );
 
-    MPI_Isend(metadata_header, 7, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
+    MPI_Isend(s_info, 1, kMPIStripingInfoDatatype, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
 
     if (!used) {
         requests[2 * slave_rank + 1] = MPI_REQUEST_NULL;
@@ -1323,7 +1334,7 @@ void do_master_work_striping(animated_gif* image) {
         requests[0] = requests[1] = MPI_REQUEST_NULL;
 
         for (int i = 1; i < world_size; ++i) {
-            master_send_stripe(i < stripe_count ? 1 : 0, i, image->p[image_idx], width, height, &s_info[i], requests);
+            master_send_stripe(i, image->p[image_idx], width, height, &s_info[i], requests);
         }
 
         MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
@@ -1496,7 +1507,7 @@ void report_hostname() {
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
 
-    prepare_pixel_datatype(&kMPIPixelDatatype);
+    prepare_datatypes();
 
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
