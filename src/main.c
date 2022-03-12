@@ -1018,6 +1018,7 @@ int slave_receive_stripe_info(striping_info* s_info) {
     MPI_Recv(s_info, 1, kMPIStripingInfoDatatype, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     int used = s_info->max_row >= 0 ? 1 : 0;
 
+    /*
     printf("SLAVE  ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
            used,
            s_info->min_row,
@@ -1027,6 +1028,7 @@ int slave_receive_stripe_info(striping_info* s_info) {
            s_info->bottom_neighbour_id,
            s_info->stripe_count
     );
+     */
 
     return used;
 }
@@ -1275,6 +1277,7 @@ int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
 
 void master_send_stripe(int slave_rank, pixel* p, int width, int height, striping_info* s_info, MPI_Request* requests) {
     int used = s_info->max_row >= 0 ? 1 : 0;
+    /*
     printf("MASTER ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
         used,
         s_info->min_row,
@@ -1284,6 +1287,7 @@ void master_send_stripe(int slave_rank, pixel* p, int width, int height, stripin
         s_info->bottom_neighbour_id,
         s_info->stripe_count
     );
+     */
 
     MPI_Isend(s_info, 1, kMPIStripingInfoDatatype, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
 
