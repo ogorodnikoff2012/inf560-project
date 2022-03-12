@@ -7,16 +7,6 @@
 #include <helper_cuda.h>
 #include "common.h"
 
-#define checkCudaErrors(call)                                 \
-  do {                                                        \
-    cudaError_t err = call;                                   \
-    if (err != cudaSuccess) {                                 \
-      printf("CUDA error at %s %d: %s\n", __FILE__, __LINE__, \
-             cudaGetErrorString(err));                        \
-      exit(EXIT_FAILURE);                                     \
-    }                                                         \
-  } while (0)
-
 #define NB_STREAMS 8
 
 cudaStream_t streams[NB_STREAMS];
@@ -25,8 +15,8 @@ void allocate_device_MPI_process(int rank) {
     int nbGPU, deviceUsed;
 
     cudaGetDeviceCount(&nbGPU);
-    cudaCheckErrors(cudaSetDevice(rank % nbGPU));
-    cudaCheckErrors(cudaGetDevice(&deviceUsed));
+    checkCudaErrors(cudaSetDevice(rank % nbGPU));
+    checkCudaErrors(cudaGetDevice(&deviceUsed));
 
     printf("MPI process %d uses device %d\n", rank, deviceUsed);
 }
@@ -266,7 +256,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
         );
 
         for (int i = 0; i < 7; ++i) {
-            cudaCheckErrors(cudaStreamSynchronize(streams[i]));
+            checkCudaErrors(cudaStreamSynchronize(streams[i]));
         }
 
         bool_and_multi_block<<<reducedEndSize, BOOL_AND_BLOCK_SIZE>>>(end_device, width * height, end_reduced_device);
@@ -277,7 +267,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
         swap(&p_device, &new_device);
     } while(threshold > 0 && !end);
 
-    cudaCheckErrors(cudaMemcpy(p, p_device, width * height * sizeof(pixel), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(p, p_device, width * height * sizeof(pixel), cudaMemcpyDeviceToHost));
 
     checkCudaErrors(cudaFree(p_device));
     checkCudaErrors(cudaFree(new_device));
