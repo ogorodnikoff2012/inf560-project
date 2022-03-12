@@ -1341,9 +1341,9 @@ void do_master_work_striping(animated_gif* image) {
             master_send_stripe(i, image->p[image_idx], width, height, &s_info[i], requests);
         }
 
-        MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
-
         apply_all_filters(image, image_idx, &s_info[0]);
+
+        MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
 
         master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
     }
