@@ -600,8 +600,11 @@ void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_in
 
     const int width = image->width[image_index];
 
-#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, s_info) private(row, col)
-    for (row = s_info->min_row; row < s_info->max_row; row++) {
+    const int min_row = s_info->min_row;
+    const int max_row = s_info->max_row;
+
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, min_row, max_row) private(row, col)
+    for (row = min_row; row < max_row; row++) {
         for (col = 0; col < width; ++col) {
             int moy;
 
@@ -729,10 +732,27 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             synchronize_rows(p, width, height, size, s_info);
         }
 
+        const int begin1    = max(0, s_info->min_row);
+        const int end1      = min(size, s_info->max_row);
+        const int begin2    = max(size, s_info->min_row);
+        const int end2      = min(height - size, s_info->max_row);
+        const int begin3    = max(size, s_info->min_row);
+        const int end3      = min(height - size, s_info->max_row);
+        const int begin4    = max(height - size, s_info->min_row);
+        const int end4      = min(height - 1, s_info->max_row);
+        const int begin5    = max(size, s_info->min_row);
+        const int end5      = min(height / 10 - size, s_info->max_row);
+        const int begin6    = max(height / 10 - size, s_info->min_row);
+        const int end6      = min((int)(height * 0.9 + size), s_info->max_row);
+        const int begin7    = max((int)(height * 0.9 + size), s_info->min_row);
+        const int end7      = min(height - size, s_info->max_row);
+        const int begin8    = max(1, s_info->min_row);
+        const int end8      = min(height - 1, s_info->max_row);
+
         #pragma omp parallel shared(end)
         {
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(0, s_info->min_row); j < min(size, s_info->max_row); j++) {
+            for (j = begin1; j < end1; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -741,7 +761,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin2; j < end2; j++) {
                 for (k = 0; k < size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -750,7 +770,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin3; j < end3; j++) {
                 for (k = width - size; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -759,7 +779,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(height - size, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+            for (j = begin4; j < end4; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -769,7 +789,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Apply blur on top part of image (10%) */
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height / 10 - size, s_info->max_row); j++) {
+            for (j = begin5; j < end5; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
                     int t_r = 0;
@@ -792,8 +812,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Copy the middle part of the image */
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size, s_info) schedule(static) nowait
-            for (j = max(height / 10 - size, s_info->min_row); j < min((int)(height * 0.9 + size), s_info->max_row);
-            j++) {
+            for (j = begin6; j < end6; j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -803,7 +822,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Apply blur on the bottom part of the image (10%) */
 #pragma omp for collapse(2) private(j, k) firstprivate(width, height, new, p, size, s_info) schedule(static)
-            for (j = max((int)(height * 0.9 + size), s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin7; j < end7; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
                     int t_r = 0;
@@ -827,7 +846,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             // Sync point
 
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold, s_info) schedule(static) reduction(&&: end)
-            for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+            for (j = begin8; j < end8; j++) {
                 for (k = 1; k < width - 1; k++) {
 
                     float diff_r;
@@ -888,8 +907,11 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
 
     #pragma omp parallel
     {
+        const int beginOuter = max(1, s_info->min_row);
+        const int endOuter   = min(height - 1, s_info->max_row);
+
 #pragma omp for collapse(2) private(j, k) firstprivate(p, sobel, width, height, s_info) schedule(static)
-        for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+        for (j = beginOuter; j < endOuter; j++) {
             for (k = 1; k < width - 1; k++) {
                 int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
                 int pixel_blue_so, pixel_blue_s, pixel_blue_se;
@@ -931,7 +953,7 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
         }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(p, sobel, width, height, s_info) schedule(static)
-        for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+        for (j = beginOuter; j < endOuter; j++) {
             for (k = 1; k < width - 1; k++) {
                 p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
                 p[CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
