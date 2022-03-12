@@ -6,7 +6,7 @@ CC=mpicc
 CFLAGS=-O3 -I$(HEADER_DIR) -fopenmp -std=gnu99 -DUSE_CUDA
 NVCC=nvcc
 NVCFLAGS=-O3 -I$(HEADER_DIR)
-LDFLAGS=-lm -lcudart
+LDFLAGS=-L/users/profs/2016/patrick.carribault/local/openmpi/install/lib -lm -lcudart -lmpi -lgomp
 
 SRC= dgif_lib.c \
 	egif_lib.c \
@@ -41,7 +41,7 @@ $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 sobelf:$(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(NVCC) $(NVCFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f sobelf $(OBJ)

@@ -203,6 +203,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     checkCudaErrors(cudaMalloc((void**) &end_reduced_device, reducedEndSize * sizeof(bool)));
 
     checkCudaErrors(cudaMemcpy(p_device, p, width * height * sizeof(pixel), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemset(end_device, 1, width * height * sizeof(bool)));
 
     do {
         end = 1;
@@ -221,7 +222,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
         const int end6      = min((int)(height * 0.9 + size), s_info->max_row);
         const int begin7    = max((int)(height * 0.9 + size), s_info->min_row);
         const int end7      = min(height - size, s_info->max_row);
-        const int begin8    = max(1, s_info->min_row);
+        const int begin8    = max(0, s_info->min_row);
         const int end8      = min(height, s_info->max_row);
 
         apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, 0, streams[0]>>>(
