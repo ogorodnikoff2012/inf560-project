@@ -1051,6 +1051,36 @@ void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
              0, DATA_TAG, MPI_COMM_WORLD);
 }
 
+void clear_outer_pixels(pixel* p, int width, int height, striping_info* s_info) {
+    if (s_info->max_row == -1) {
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height) private(row, col)
+        for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+                p[CONV(row, col, width)].r = 0;
+                p[CONV(row, col, width)].g = 0;
+                p[CONV(row, col, width)].b = 0;
+            }
+        }
+    } else {
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col) nowait
+        for (int row = 0; row < s_info->min_row; ++row) {
+            for (int col = 0; col < width; ++col) {
+                p[CONV(row, col, width)].r = 0;
+                p[CONV(row, col, width)].g = 0;
+                p[CONV(row, col, width)].b = 0;
+            }
+        }
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col)
+        for (int row = s_info->max_row; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+                p[CONV(row, col, width)].r = 0;
+                p[CONV(row, col, width)].g = 0;
+                p[CONV(row, col, width)].b = 0;
+            }
+        }
+    }
+}
+
 int slave_striping(animated_gif* image, char* output_filename) {
     // slave_broadcast_metadata(image);
 
@@ -1060,11 +1090,15 @@ int slave_striping(animated_gif* image, char* output_filename) {
 
         striping_info s_info;
         int has_work = slave_receive_stripe_info(&s_info);
-        if (!has_work) { continue; }
+        if (!has_work) {
+            clean_outer_pixels(p, width, height, &s_info);
+            continue;
+        }
 
         pixel* p = image->p[image_idx]; // = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
         // slave_receive_stripe(p, width, height, &s_info);
         apply_all_filters(image, image_idx, &s_info);
+        clear_outer_pixels(p, width, height, &s_info);
         slave_send_stripe(p, width, height, &s_info);
         // free(p);
     }
@@ -1124,6 +1158,11 @@ int slave_main(int argc, char *argv[]) {
         processed_image_requests[i] = MPI_REQUEST_NULL;
     }
 
+    bool processed_images[image->n_images];
+    for (int i = 0; i < image->n_images; ++i) {
+        processed_images[i] = false;
+    }
+
     while (true) {
         MPI_Recv(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         if (image_index == -1) {
@@ -1135,6 +1174,8 @@ int slave_main(int argc, char *argv[]) {
         MPI_Recv(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
                  image_index, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         */
+
+        processed_images[image_index] = true;
 
         striping_info s_info;
         s_info.single_mode = 1;
@@ -1157,6 +1198,16 @@ int slave_main(int argc, char *argv[]) {
     for (int i = 0; i < image->n_images; ++i) {
         if (processed_image_requests[i] != MPI_REQUEST_NULL) {
             MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
+        }
+        if (!processed_images[i]) {
+            striping_info s_info;
+            s_info.min_row = -1;
+            s_info.max_row = -1;
+            s_info.single_mode = 1;
+            s_info.top_neighbour_id = -1;
+            s_info.bottom_neighbour_id = -1;
+            s_info.stripe_count = 1;
+            clear_outer_pixels(image->p[i], image->width[i], image->height[i], &s_info);
         }
         // free(image->p[i]);
     }
