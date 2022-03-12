@@ -576,6 +576,12 @@ typedef struct striping_info {
     int stripe_count;
 } striping_info;
 
+typedef struct collection_config {
+    int n_images;
+    int world_size;
+    striping_info** s_info;
+} collection_config;
+
 typedef enum striping_mpi_tag {
     TOP_TO_BTM_TAG,
     BTM_TO_TOP_TAG,
@@ -1045,7 +1051,7 @@ void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
              0, DATA_TAG, MPI_COMM_WORLD);
 }
 
-int slave_striping(animated_gif* image) {
+int slave_striping(animated_gif* image, char* output_filename) {
     // slave_broadcast_metadata(image);
 
     for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
@@ -1066,8 +1072,17 @@ int slave_striping(animated_gif* image) {
     // free(image->width);
     // free(image->height);
     // free(image->p);
+    store_pixels(output_filename, image);
 
     return 0;
+}
+
+char* generate_output_filename(const char* original, int rank) {
+    int orig_len = strlen(original);
+    int buf_len = orig_len + 100;
+    char* buffer = calloc(buf_len, sizeof(char));
+    snprintf(buffer, buf_len, "%s.%d.gif", original, rank);
+    return buffer;
 }
 
 int slave_main(int argc, char *argv[]) {
@@ -1082,10 +1097,13 @@ int slave_main(int argc, char *argv[]) {
         return 1;
     }
 
-    animated_gif* image = load_pixels(argv[1]);
+    char* input_filename = argv[1];
+    char* output_filename = generate_output_filename(argv[2], rank);
+
+    animated_gif* image = load_pixels(input_filename);
 
     if (work_mode == WORK_MODE_STRIPING) {
-        return slave_striping(image);
+        return slave_striping(image, output_filename);
     }
 
     if (work_mode != WORK_MODE_LEGACY) {
@@ -1146,11 +1164,12 @@ int slave_main(int argc, char *argv[]) {
     // free(image->width);
     // free(image->height);
     // free(image->p);
+    store_pixels(output_filename, image);
 
     return 0;
 }
 
-void do_master_work_legacy(animated_gif *image) {
+collection_config* do_master_work_legacy(animated_gif *image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1162,6 +1181,11 @@ void do_master_work_legacy(animated_gif *image) {
 
     /* First, we broadcast metadata */
     // master_broadcast_metadata(image);
+
+    collection_config* cfg = calloc(1, sizeof(collection_config));
+    cfg->n_images = image->n_images;
+    cfg->world_size = world_size;
+    cfg->s_info = calloc(cfg->n_images, sizeof(void*));
 
     /* Start scheduling */
     MPI_Request table_of_requests[world_size];
@@ -1190,6 +1214,18 @@ void do_master_work_legacy(animated_gif *image) {
 
         int image_index = slave_signals[indx];
         if (image_index != -1) {
+            striping_info* s_info = cfg->s_info[image_index] = calloc(world_size, sizeof(striping_info));
+            for (int i = 0; i < world_size; ++i) {
+                s_info[i].min_row = -1;
+                s_info[i].max_row = -1;
+                s_info[i].single_mode = 1;
+                s_info[i].top_neighbour_id = -1;
+                s_info[i].bottom_neighbour_id = -1;
+                s_info[i].stripe_count = 1;
+            }
+            s_info[indx].min_row = 0;
+            s_info[indx].max_row = image->height[image_index];
+
             MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
                       kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
             ++processed_images;
@@ -1233,6 +1269,8 @@ void do_master_work_legacy(animated_gif *image) {
             slave_terminated[i] = true;
         }
     }
+
+    return cfg;
 }
 
 int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
@@ -1316,7 +1354,7 @@ void master_receive_stripes(pixel* p, int width, int height, striping_info* s_in
     MPI_Waitall(stripe_count, requests, MPI_STATUSES_IGNORE);
 }
 
-void do_master_work_striping(animated_gif* image) {
+collection_config* do_master_work_striping(animated_gif* image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1327,11 +1365,16 @@ void do_master_work_striping(animated_gif* image) {
     /* First, we broadcast metadata */
     // master_broadcast_metadata(image);
 
+    collection_config* cfg = calloc(1, sizeof(collection_config));
+    cfg->n_images = image->n_images;
+    cfg->world_size = world_size;
+    cfg->s_info = calloc(cfg->n_images, sizeof(void*));
+
     for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
         int width = image->width[image_idx];
         int height = image->height[image_idx];
 
-        striping_info s_info[world_size];
+        striping_info* s_info = cfg->s_info[image_idx] = calloc(world_size, sizeof(striping_info));
         int stripe_count = prepare_stripe_info(height, world_size, s_info);
 
         // Send stripes
@@ -1348,6 +1391,27 @@ void do_master_work_striping(animated_gif* image) {
         MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
 
         master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
+    }
+
+    return cfg;
+}
+
+void collect_data(animated_gif* image, collection_config* cfg) {
+    // Just print it
+    for (int i = 0; i < cfg->n_images; ++i) {
+        printf("Image %3d/%3d\n", i, cfg->n_images);
+        for (int j = 0; j < cfg->world_size; ++j) {
+            striping_info* s_info = &cfg->s_info[i][j];
+            printf("SLAVE %2d/%2d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+                   j, cfg->world_size,
+                   s_info->min_row,
+                   s_info->max_row,
+                   s_info->single_mode,
+                   s_info->top_neighbour_id,
+                   s_info->bottom_neighbour_id,
+                   s_info->stripe_count
+            );
+        }
     }
 }
 
@@ -1394,14 +1458,16 @@ int master_main(int argc, char *argv[]) {
 
     bool use_legacy = (world_size >= 4) && (image->n_images >= world_size - 1);
 
+    collection_config* cfg;
+
     if (use_legacy) {
         master_sync(WORK_MODE_LEGACY);
 
-        do_master_work_legacy(image);
+        cfg = do_master_work_legacy(image);
     } else {
         master_sync(WORK_MODE_STRIPING);
 
-        do_master_work_striping(image);
+        cfg = do_master_work_striping(image);
     }
 
     /* FILTER Timer stop */
@@ -1413,6 +1479,9 @@ int master_main(int argc, char *argv[]) {
 
     /* EXPORT Timer start */
     gettimeofday(&t1, NULL);
+
+    collect_data(image, cfg);
+    free(cfg);
 
     /* Store file from array of pixels to GIF file */
     if (!store_pixels(output_filename, image)) {
