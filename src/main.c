@@ -729,9 +729,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             synchronize_rows(p, width, height, size, s_info);
         }
 
-        #pragma omp parallel
+        #pragma omp parallel shared(end)
         {
-            int local_end = 1;
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
             for (j = max(0, s_info->min_row); j < min(size, s_info->max_row); j++) {
                 for (k = 0; k < width - 1; k++) {
@@ -827,7 +826,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             // Sync point
 
-#pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold, s_info) schedule(static)
+#pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold, s_info) schedule(static) reduction(&&: end)
             for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
                 for (k = 1; k < width - 1; k++) {
 
@@ -845,7 +844,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                         ||
                         diff_b > threshold || -diff_b > threshold
                             ) {
-                        local_end = 0;
+                        end = end && 0;
                     }
 
                     p[CONV(j, k, width)].r = new[CONV(j, k, width)].r;
@@ -854,8 +853,6 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                 }
             }
 
-#pragma omp critical
-            end = end && local_end;
         }
 
         if (!s_info->single_mode) {
