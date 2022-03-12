@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <helper_functions.h>
 #include <helper_cuda.h>
 #include <cuda_runtime.h>
@@ -169,9 +170,9 @@ void swap(pixel** a, pixel** b) {
 
 void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int image_index, striping_info* s_info) {
     int width, height;
-    volatile int end = 0;
+    int end = 0;
 
-    volatile pixel *p;
+    pixel *p;
 
     pixel *p_device;
     pixel *new_device;
@@ -222,7 +223,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
                 begin1, end1, 0, width, end_device
                 );
 
-        apply_blur_filter_loop_srctodest<<<gridsize, blocksize, stream[1]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[1]>>>(
                 p_device, new_device, width, threshold,
                 begin2, end2, 0, size, end_device
         );
