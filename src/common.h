@@ -5,6 +5,8 @@
 #ifndef SOBELF_COMMON_H
 #define SOBELF_COMMON_H
 
+#include "gif_lib.h"
+
 /* Represent one pixel from the image */
 typedef struct {
     uint8_t r; /* Red */

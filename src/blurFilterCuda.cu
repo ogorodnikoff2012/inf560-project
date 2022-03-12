@@ -168,12 +168,10 @@ void swap(pixel** a, pixel** b) {
 }
 
 void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int image_index, striping_info* s_info) {
-    int j, k;
     int width, height;
-    int end = 0;
-    int n_iter = 0;
+    volatile int end = 0;
 
-    pixel *p;
+    volatile pixel *p;
 
     pixel *p_device;
     pixel *new_device;
@@ -185,7 +183,6 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
 
 
     /* Process all images */
-    n_iter = 0;
     width = image->width[image_index];
     height = image->height[image_index];
 
@@ -193,20 +190,15 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     int gridSize = (width * height) / 256 + 1;
     const int reducedEndSize = 64;
 
-    checkCudaErrors(cudaMalloc((void**) &p_device, width * height * sizeof(pixel), streams[0]));
-    checkCudaErrors(cudaMalloc((void**) &new_device, width * height * sizeof(pixel), streams[1]));
-    checkCudaErrors(cudaMalloc((void**) &end_device, width * height * sizeof(bool), streams[2]));
-    checkCudaErrors(cudaMalloc((void**) &end_reduced_device, reducedEndSize * sizeof(bool), streams[3]));
+    checkCudaErrors(cudaMalloc((void**) &p_device, width * height * sizeof(pixel)));
+    checkCudaErrors(cudaMalloc((void**) &new_device, width * height * sizeof(pixel)));
+    checkCudaErrors(cudaMalloc((void**) &end_device, width * height * sizeof(bool)));
+    checkCudaErrors(cudaMalloc((void**) &end_reduced_device, reducedEndSize * sizeof(bool)));
 
-    checkCudaErrors(cudaMemcpy(p_device, p, width * height * sizeof(pixel), cudaMemcpyHostToDevice, streams[0]));
-
-    for (int i = 0; i < 4; ++i) {
-        cudaCheckErrors(cudaStreamSynchronize(streams[i]));
-    }
+    checkCudaErrors(cudaMemcpy(p_device, p, width * height * sizeof(pixel), cudaMemcpyHostToDevice));
 
     do {
         end = 1;
-        n_iter++;
 
         const int begin1    = max(0, s_info->min_row);
         const int end1      = min(size, s_info->max_row);
