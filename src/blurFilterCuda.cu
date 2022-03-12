@@ -33,7 +33,7 @@ void destroyCudaStreams() {
     }
 }
 
-bool verify_threshold(pixel* source, pixel* dest, int j, int k, int width, int threshold) {
+__device__ bool verify_threshold(pixel* source, pixel* dest, int j, int k, int width, int threshold) {
     float diff_r;
     float diff_g;
     float diff_b;
