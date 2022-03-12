@@ -1127,7 +1127,7 @@ int slave_striping(animated_gif* image, char* output_filename) {
         // slave_receive_stripe(p, width, height, &s_info);
         apply_all_filters(image, image_idx, &s_info);
         clear_outer_pixels(p, width, height, &s_info);
-        slave_send_stripe(p, width, height, &s_info);
+        // slave_send_stripe(p, width, height, &s_info);
         // free(p);
     }
 
@@ -1220,8 +1220,9 @@ int slave_main(int argc, char *argv[]) {
         MPI_Isend(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, &req);
         MPI_Request_free(&req);
 
-        MPI_Isend(image->p[image_index], image->width[image_index] * image->height[image_index], kMPIPixelDatatype, 0,
-                  image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
+        // MPI_Isend(image->p[image_index], image->width[image_index] * image->height[image_index],
+        // kMPIPixelDatatype, 0,
+        //          image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
     }
 
     for (int i = 0; i < image->n_images; ++i) {
@@ -1307,8 +1308,8 @@ collection_config* do_master_work_legacy(animated_gif *image) {
             s_info[indx].min_row = 0;
             s_info[indx].max_row = image->height[image_index];
 
-            MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
-                      kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
+            // MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
+            //           kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
             ++processed_images;
         }
 
@@ -1471,7 +1472,7 @@ collection_config* do_master_work_striping(animated_gif* image) {
 
         MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
 
-        master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
+        // master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
     }
 
     return cfg;
