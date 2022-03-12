@@ -1462,6 +1462,8 @@ int old_main(int argc, char *argv[]) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
+    printf("Working mode: single\n");
+
     for (int i = 0; i < image->n_images; ++i) {
         striping_info s_info;
         s_info.single_mode = 1;
