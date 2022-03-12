@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <driver_types.h>
 #include <helper_functions.h>
 #include <helper_cuda.h>
-#include <cuda_runtime.h>
 #include "common.h"
 
 #define NB_STREAMS 8
@@ -220,37 +220,37 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
         const int begin8    = max(1, s_info->min_row);
         const int end8      = min(height, s_info->max_row);
 
-        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[0]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, streams[0]>>>(
                 p_device, new_device, width, threshold,
                 begin1, end1, 0, width, end_device
                 );
 
-        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[1]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, streams[1]>>>(
                 p_device, new_device, width, threshold,
                 begin2, end2, 0, size, end_device
         );
 
-        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[2]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, streams[2]>>>(
                 p_device, new_device, width, threshold,
                 begin3, end3, width - size, width, end_device
         );
 
-        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[3]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, streams[3]>>>(
                 p_device, new_device, width, threshold,
                 begin4, end4, 0, width, end_device
         );
 
-        apply_blur_filter_loop_medium<<<gridSize, blockSize, stream[4]>>>(
+        apply_blur_filter_loop_medium<<<gridSize, blockSize, streams[4]>>>(
                p_device, new_device, width, size, threshold,
                begin5, end5, size, width - size, end_device
         );
 
-        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, stream[5]>>>(
+        apply_blur_filter_loop_srcToDest<<<gridSize, blockSize, streams[5]>>>(
                 p_device, new_device, width, threshold,
                 begin6, end6, size, width - size, end_device
         );
 
-        apply_blur_filter_loop_medium<<<gridSize, blockSize, stream[6]>>>(
+        apply_blur_filter_loop_medium<<<gridSize, blockSize, streams[6]>>>(
                 p_device, new_device, width, size, threshold,
                 begin7, end7, size, width - size, end_device
         );
