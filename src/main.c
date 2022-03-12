@@ -1046,7 +1046,7 @@ void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
 }
 
 int slave_striping(animated_gif* image) {
-    slave_broadcast_metadata(image);
+    // slave_broadcast_metadata(image);
 
     for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
         int width = image->width[image_idx];
@@ -1056,16 +1056,16 @@ int slave_striping(animated_gif* image) {
         int has_work = slave_receive_stripe_info(&s_info);
         if (!has_work) { continue; }
 
-        pixel* p = image->p[image_idx] = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
-        slave_receive_stripe(p, width, height, &s_info);
+        pixel* p = image->p[image_idx]; // = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
+        // slave_receive_stripe(p, width, height, &s_info);
         apply_all_filters(image, image_idx, &s_info);
         slave_send_stripe(p, width, height, &s_info);
-        free(p);
+        // free(p);
     }
 
-    free(image->width);
-    free(image->height);
-    free(image->p);
+    // free(image->width);
+    // free(image->height);
+    // free(image->p);
 
     return 0;
 }
@@ -1076,16 +1076,16 @@ int slave_main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    animated_gif image;
-
     int work_mode = slave_sync();
 
     if (work_mode == WORK_MODE_FAILURE) {
         return 1;
     }
 
+    animated_gif* image = load_pixels(argv[1]);
+
     if (work_mode == WORK_MODE_STRIPING) {
-        return slave_striping(&image);
+        return slave_striping(image);
     }
 
     if (work_mode != WORK_MODE_LEGACY) {
@@ -1094,15 +1094,15 @@ int slave_main(int argc, char *argv[]) {
     }
 
     /* First, we broadcast metadata */
-    slave_broadcast_metadata(&image);
+    // slave_broadcast_metadata(&image);
 
-    const int kSignalTag = image.n_images;
+    const int kSignalTag = image->n_images;
 
     int image_index = -1;
     MPI_Send(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD);
 
-    MPI_Request processed_image_requests[image.n_images];
-    for (int i = 0; i < image.n_images; ++i) {
+    MPI_Request processed_image_requests[image->n_images];
+    for (int i = 0; i < image->n_images; ++i) {
         processed_image_requests[i] = MPI_REQUEST_NULL;
     }
 
@@ -1112,38 +1112,40 @@ int slave_main(int argc, char *argv[]) {
             break;
         }
 
+        /*
         image.p[image_index] = calloc(image.width[image_index] * image.height[image_index], sizeof(pixel));
         MPI_Recv(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
                  image_index, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        */
 
         striping_info s_info;
         s_info.single_mode = 1;
         s_info.min_row = 0;
-        s_info.max_row = image.height[image_index];
+        s_info.max_row = image->height[image_index];
         s_info.top_neighbour_id = -1;
         s_info.bottom_neighbour_id = -1;
         s_info.stripe_count = 1;
 
-        apply_all_filters(&image, image_index, &s_info);
+        apply_all_filters(image, image_index, &s_info);
 
         MPI_Request req;
         MPI_Isend(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, &req);
         MPI_Request_free(&req);
 
-        MPI_Isend(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
+        MPI_Isend(image->p[image_index], image->width[image_index] * image->height[image_index], kMPIPixelDatatype, 0,
                   image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
     }
 
-    for (int i = 0; i < image.n_images; ++i) {
+    for (int i = 0; i < image->n_images; ++i) {
         if (processed_image_requests[i] != MPI_REQUEST_NULL) {
             MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
         }
-        free(image.p[i]);
+        // free(image->p[i]);
     }
 
-    free(image.width);
-    free(image.height);
-    free(image.p);
+    // free(image->width);
+    // free(image->height);
+    // free(image->p);
 
     return 0;
 }
@@ -1159,7 +1161,7 @@ void do_master_work_legacy(animated_gif *image) {
     printf("Working mode: legacy\n");
 
     /* First, we broadcast metadata */
-    master_broadcast_metadata(image);
+    // master_broadcast_metadata(image);
 
     /* Start scheduling */
     MPI_Request table_of_requests[world_size];
@@ -1204,9 +1206,9 @@ void do_master_work_legacy(animated_gif *image) {
             int next_image_index = sent_images++;
             MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
-            MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
+            // MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
                       kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
-            MPI_Request_free(&req);
+            // MPI_Request_free(&req);
 
             MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, table_of_requests + indx);
         }
@@ -1291,14 +1293,14 @@ void master_send_stripe(int slave_rank, pixel* p, int width, int height, stripin
 
     MPI_Isend(s_info, 1, kMPIStripingInfoDatatype, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
 
-    if (!used) {
-        requests[2 * slave_rank + 1] = MPI_REQUEST_NULL;
-        return;
-    }
+    //if (!used) {
+    requests[2 * slave_rank + 1] = MPI_REQUEST_NULL;
+    return;
+    //}
 
-    int row_count = s_info->max_row - s_info->min_row;
-    MPI_Isend(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
-              slave_rank, DATA_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank + 1]);
+    //int row_count = s_info->max_row - s_info->min_row;
+    //MPI_Isend(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+    //          slave_rank, DATA_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank + 1]);
 }
 
 void master_receive_stripes(pixel* p, int width, int height, striping_info* s_info, int stripe_count) {
@@ -1323,7 +1325,7 @@ void do_master_work_striping(animated_gif* image) {
     printf("Working mode: striping\n");
 
     /* First, we broadcast metadata */
-    master_broadcast_metadata(image);
+    // master_broadcast_metadata(image);
 
     for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
         int width = image->width[image_idx];
@@ -1390,7 +1392,9 @@ int master_main(int argc, char *argv[]) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    if (image->n_images >= world_size - 1) {
+    bool use_legacy = (world_size >= 4) && (image->n_images >= world_size - 1);
+
+    if (use_legacy) {
         master_sync(WORK_MODE_LEGACY);
 
         do_master_work_legacy(image);
