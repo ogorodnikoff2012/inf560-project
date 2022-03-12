@@ -1207,7 +1207,7 @@ void do_master_work_legacy(animated_gif *image) {
             MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
             // MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
-                      kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
+            //          kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
             // MPI_Request_free(&req);
 
             MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, table_of_requests + indx);
