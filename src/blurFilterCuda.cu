@@ -86,8 +86,10 @@ __global__ void apply_blur_filter_loop_srcToDest(pixel* source, pixel* dest, int
                                                  int minCol, int maxCol, int minRow, int maxRow, bool* end) {
     int j, k;
 
-    j = blockIdx.x * blockDim.x + threadIdx.x;
-    k = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    j = i / width;
+    k = i % width;
 
     if(minRow <= j && j < maxRow) {
         if(minCol <= k && k < maxCol) {
@@ -104,8 +106,10 @@ __global__ void apply_blur_filter_loop_medium(pixel* source, pixel* dest, int wi
                                               int minCol, int maxCol, int minRow, int maxRow, bool* end) {
     int j, k;
 
-    j = blockIdx.x * blockDim.x + threadIdx.x;
-    k = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    j = i / width;
+    k = i % width;
 
     if(minRow <= j && j < maxRow) {
         if(minCol <= k && k < maxCol) {
@@ -136,8 +140,10 @@ __global__ void apply_blur_filter_loop_final(pixel* source, pixel* dest, int thr
                                              int minCol, int maxCol, int minRow, int maxRow, char* end) {
     int j, k;
 
-    j = blockIdx.x * blockDim.x + threadIdx.x;
-    k = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    j = i / width;
+    k = i % width;
 
     if(minRow <= j && j < maxRow) {
         if (minCol <= k && k < maxCol) {
@@ -193,8 +199,8 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     width = image->width[image_index];
     height = image->height[image_index];
 
-    dim3 blockSize(16, 16);
-    int gridSize = (width * height) / 256 + 1;
+    blockSize = 256;
+    int gridSize = (width * height) / blockSize + 1;
     const int reducedEndSize = 64;
 
     checkCudaErrors(cudaMalloc((void**) &p_device, width * height * sizeof(pixel)));
