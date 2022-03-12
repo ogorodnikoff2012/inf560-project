@@ -90,7 +90,7 @@ __global__ void apply_blur_filter_loop_srcToDest(pixel* source, pixel* dest, int
     k = blockIdx.y * blockDim.y + threadIdx.y;
 
     if(minRow <= j && j < maxRow) {
-        if(minCol <= k && k < maxRow) {
+        if(minCol <= k && k < maxCol) {
             dest[CONV(j, k, width)].r = source[CONV(j, k, width)].r;
             dest[CONV(j, k, width)].g = source[CONV(j, k, width)].g;
             dest[CONV(j, k, width)].b = source[CONV(j, k, width)].b;
@@ -108,7 +108,7 @@ __global__ void apply_blur_filter_loop_medium(pixel* source, pixel* dest, int wi
     k = blockIdx.y * blockDim.y + threadIdx.y;
 
     if(minRow <= j && j < maxRow) {
-        if(minCol <= k && k < maxRow) {
+        if(minCol <= k && k < maxCol) {
             int stencil_j, stencil_k;
             int t_r = 0;
             int t_g = 0;
