@@ -1052,30 +1052,34 @@ void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
 }
 
 void clear_outer_pixels(pixel* p, int width, int height, striping_info* s_info) {
+    int row, col;
     if (s_info->max_row == -1) {
 #pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height) private(row, col)
-        for (int row = 0; row < height; ++row) {
-            for (int col = 0; col < width; ++col) {
+        for (row = 0; row < height; ++row) {
+            for (col = 0; col < width; ++col) {
                 p[CONV(row, col, width)].r = 0;
                 p[CONV(row, col, width)].g = 0;
                 p[CONV(row, col, width)].b = 0;
             }
         }
     } else {
-#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col) nowait
-        for (int row = 0; row < s_info->min_row; ++row) {
-            for (int col = 0; col < width; ++col) {
-                p[CONV(row, col, width)].r = 0;
-                p[CONV(row, col, width)].g = 0;
-                p[CONV(row, col, width)].b = 0;
+#pragma omp parallel
+        {
+#pragma omp for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col) nowait
+            for (row = 0; row < s_info->min_row; ++row) {
+                for (col = 0; col < width; ++col) {
+                    p[CONV(row, col, width)].r = 0;
+                    p[CONV(row, col, width)].g = 0;
+                    p[CONV(row, col, width)].b = 0;
+                }
             }
-        }
-#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col)
-        for (int row = s_info->max_row; row < height; ++row) {
-            for (int col = 0; col < width; ++col) {
-                p[CONV(row, col, width)].r = 0;
-                p[CONV(row, col, width)].g = 0;
-                p[CONV(row, col, width)].b = 0;
+#pragma omp for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col)
+            for (row = s_info->max_row; row < height; ++row) {
+                for (col = 0; col < width; ++col) {
+                    p[CONV(row, col, width)].r = 0;
+                    p[CONV(row, col, width)].g = 0;
+                    p[CONV(row, col, width)].b = 0;
+                }
             }
         }
     }
@@ -1091,7 +1095,8 @@ int slave_striping(animated_gif* image, char* output_filename) {
         striping_info s_info;
         int has_work = slave_receive_stripe_info(&s_info);
         if (!has_work) {
-            clean_outer_pixels(p, width, height, &s_info);
+            pixel* p = image->p[image_idx]; // = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
+            clear_outer_pixels(p, width, height, &s_info);
             continue;
         }
 
