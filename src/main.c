@@ -1085,6 +1085,19 @@ void clear_outer_pixels(pixel* p, int width, int height, striping_info* s_info) 
     }
 }
 
+void copy_stripe(pixel* src, pixel* dst, int width, int height, striping_info* s_info) {
+    if (s_info->max_row == -1) { return; }
+    int row, col;
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(src, dst, width,height, s_info) private(row, col)
+    for (row = s_info->min_row; row < s_info->max_row; ++row) {
+        for (col = 0; col < width; ++col) {
+            dst[CONV(row, col, width)].r = src[CONV(row, col, width)].r;
+            dst[CONV(row, col, width)].g = src[CONV(row, col, width)].g;
+            dst[CONV(row, col, width)].b = src[CONV(row, col, width)].b;
+        }
+    }
+}
+
 int slave_striping(animated_gif* image, char* output_filename) {
     // slave_broadcast_metadata(image);
 
@@ -1452,21 +1465,33 @@ collection_config* do_master_work_striping(animated_gif* image) {
     return cfg;
 }
 
-void collect_data(animated_gif* image, collection_config* cfg) {
-    // Just print it
-    for (int i = 0; i < cfg->n_images; ++i) {
-        printf("Image %3d/%3d\n", i, cfg->n_images);
-        for (int j = 0; j < cfg->world_size; ++j) {
-            striping_info* s_info = &cfg->s_info[i][j];
-            printf("SLAVE %2d/%2d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
-                   j, cfg->world_size,
-                   s_info->min_row,
-                   s_info->max_row,
-                   s_info->single_mode,
-                   s_info->top_neighbour_id,
-                   s_info->bottom_neighbour_id,
-                   s_info->stripe_count
-            );
+void collect_data(animated_gif* image, collection_config* cfg, const char* output_filename) {
+//    // Just print it
+//    for (int i = 0; i < cfg->n_images; ++i) {
+//        printf("Image %3d/%3d\n", i, cfg->n_images);
+//        for (int j = 0; j < cfg->world_size; ++j) {
+//            striping_info* s_info = &cfg->s_info[i][j];
+//            printf("SLAVE %2d/%2d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+//                   j, cfg->world_size,
+//                   s_info->min_row,
+//                   s_info->max_row,
+//                   s_info->single_mode,
+//                   s_info->top_neighbour_id,
+//                   s_info->bottom_neighbour_id,
+//                   s_info->stripe_count
+//            );
+//        }
+//    }
+    for (int slave = 1; slave < cfg->world_size; ++slave) {
+        animated_gif* slave_result = load_pixels(generate_output_filename(output_filename, slave));
+        for (int image_index = 0; image_index < cfg->n_images; ++image_index) {
+            copy_stripe(
+                    slave_result->p[image_index],
+                    image->p[image_index],
+                    image->width[image_index],
+                    image->height[image_index],
+                    &cfg->s_info[image_index][slave]);
+            free(slave_result->p[image_index]); // We aren't interested on other memory leaks
         }
     }
 }
@@ -1536,7 +1561,7 @@ int master_main(int argc, char *argv[]) {
     /* EXPORT Timer start */
     gettimeofday(&t1, NULL);
 
-    collect_data(image, cfg);
+    collect_data(image, cfg, output_filename);
     free(cfg);
 
     /* Store file from array of pixels to GIF file */
