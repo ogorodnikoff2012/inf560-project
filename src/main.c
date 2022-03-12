@@ -1002,6 +1002,16 @@ int slave_receive_stripe_info(striping_info* s_info) {
     s_info->bottom_neighbour_id = metadata_header[5];
     s_info->stripe_count        = metadata_header[6];
 
+    printf("SLAVE  ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+           metadata_header[0],
+           metadata_header[1],
+           metadata_header[2],
+           metadata_header[3],
+           metadata_header[4],
+           metadata_header[5],
+           metadata_header[6]
+    );
+
     return metadata_header[0];
 }
 
@@ -1253,6 +1263,16 @@ void master_send_stripe(int used, int slave_rank, pixel* p, int width, int heigh
     metadata_header[5] = s_info->bottom_neighbour_id;
     metadata_header[6] = s_info->stripe_count;
 
+    printf("MASTER ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+           metadata_header[0],
+           metadata_header[1],
+           metadata_header[2],
+           metadata_header[3],
+           metadata_header[4],
+           metadata_header[5],
+           metadata_header[6]
+    );
+
     MPI_Request req;
     MPI_Isend(metadata_header, 7, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &req);
     MPI_Request_free(&req);
@@ -1296,21 +1316,10 @@ void do_master_work_striping(animated_gif* image) {
         striping_info s_info[world_size];
         int stripe_count = prepare_stripe_info(height, world_size, s_info);
 
-        for (int i = 0; i < world_size; ++i) {
-            printf("s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d} ",
-                   s_info[i].min_row,
-                   s_info[i].max_row,
-                   s_info[i].single_mode,
-                   s_info[i].top_neighbour_id,
-                   s_info[i].bottom_neighbour_id,
-                   s_info[i].stripe_count);
-        }
-        printf("\n");
-
         // Send stripes
 
         for (int i = 1; i < world_size; ++i) {
-            master_send_stripe(i < stripe_count, i, image->p[image_idx], width, height, &s_info[i]);
+            master_send_stripe(i < stripe_count ? 1 : 0, i, image->p[image_idx], width, height, &s_info[i]);
         }
 
         apply_all_filters(image, image_idx, &s_info[0]);
