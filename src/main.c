@@ -930,7 +930,11 @@ void apply_all_filters(animated_gif *image, int image_idx, striping_info* s_info
     apply_gray_filter(image, image_idx, s_info);
 
     // Apply blur filter with convergence value
+#ifdef USE_CUDA
+    apply_blur_filter_cuda(image, BLUR_RADIUS, 20, image_idx, s_info);
+#else
     apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
+#endif
 
     // Apply sobel filter on pixels
     apply_sobel_filter(image, image_idx, s_info);
@@ -1674,6 +1678,11 @@ int main(int argc, char *argv[]) {
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+#ifdef USE_CUDA
+    allocate_device_MPI_process(rank);
+    createCudaStreams();
+#endif
+
     // report_hostname();
 
     if (rank == 0) {
@@ -1683,7 +1692,6 @@ int main(int argc, char *argv[]) {
                 printf("Number of MPI processes %d and number of threads %d\n", world_size, omp_get_num_threads());
         }
     }
-
 
     int ret_code;
 
@@ -1695,6 +1703,9 @@ int main(int argc, char *argv[]) {
         ret_code = slave_main(argc, argv);
     }
 
+#ifdef USE_CUDA
+    destroyCudaStreams();
+#endif
     MPI_Finalize();
     return ret_code;
 }

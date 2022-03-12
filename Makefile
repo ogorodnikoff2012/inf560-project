@@ -3,8 +3,10 @@ HEADER_DIR=include
 OBJ_DIR=obj
 
 CC=mpicc
-CFLAGS=-O3 -I$(HEADER_DIR) -fopenmp -std=gnu99
-LDFLAGS=-lm
+CFLAGS=-O3 -I$(HEADER_DIR) -fopenmp -std=gnu99 -DUSE_CUDA
+NVCC=nvcc
+NVCFLAGS=-O3 -I$(HEADER_DIR)
+LDFLAGS=-lm -lcudart
 
 SRC= dgif_lib.c \
 	egif_lib.c \
@@ -24,12 +26,16 @@ OBJ= $(OBJ_DIR)/dgif_lib.o \
 	$(OBJ_DIR)/gifalloc.o \
 	$(OBJ_DIR)/main.o \
 	$(OBJ_DIR)/openbsd-reallocarray.o \
-	$(OBJ_DIR)/quantize.o
+	$(OBJ_DIR)/quantize.o \
+	$(OBJ_DIR)/blurFilterCuda.o
 
 all: $(OBJ_DIR) sobelf
 
 $(OBJ_DIR):
 	mkdir $(OBJ_DIR)
+
+$(OBJ_DIR)/blurFilterCuda.o: $(SRC_DIR)/blurFilterCuda.cu $(OBJ_DIR)
+	$(NVCC) $(NVCFLAGS) -c -o $@ $<
 
 $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
