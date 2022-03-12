@@ -1253,7 +1253,8 @@ int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
     return stripe_count;
 }
 
-void master_send_stripe(int used, int slave_rank, pixel* p, int width, int height, striping_info* s_info) {
+void master_send_stripe(int used, int slave_rank, pixel* p, int width, int height, striping_info* s_info,
+                        MPI_Request* requests) {
     int metadata_header[7];
     metadata_header[0] = used;
     metadata_header[1] = s_info->min_row;
@@ -1273,16 +1274,16 @@ void master_send_stripe(int used, int slave_rank, pixel* p, int width, int heigh
            metadata_header[6]
     );
 
-    MPI_Request req;
-    MPI_Isend(metadata_header, 7, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &req);
-    MPI_Request_free(&req);
+    MPI_Isend(metadata_header, 7, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
 
-    if (!used) { return; }
+    if (!used) {
+        requests[2 * slave_rank + 1] = MPI_REQUEST_NULL;
+        return;
+    }
 
     int row_count = s_info->max_row - s_info->min_row;
     MPI_Isend(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
-              slave_rank, DATA_TAG, MPI_COMM_WORLD, &req);
-    MPI_Request_free(&req);
+              slave_rank, DATA_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank + 1]);
 }
 
 void master_receive_stripes(pixel* p, int width, int height, striping_info* s_info, int stripe_count) {
@@ -1318,9 +1319,14 @@ void do_master_work_striping(animated_gif* image) {
 
         // Send stripes
 
+        MPI_Request requests[2 * world_size];
+        requests[0] = requests[1] = MPI_REQUEST_NULL;
+
         for (int i = 1; i < world_size; ++i) {
-            master_send_stripe(i < stripe_count ? 1 : 0, i, image->p[image_idx], width, height, &s_info[i]);
+            master_send_stripe(i < stripe_count ? 1 : 0, i, image->p[image_idx], width, height, &s_info[i], requests);
         }
+
+        MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
 
         apply_all_filters(image, image_idx, &s_info[0]);
 
