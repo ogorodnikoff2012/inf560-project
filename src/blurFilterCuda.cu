@@ -199,7 +199,7 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     width = image->width[image_index];
     height = image->height[image_index];
 
-    blockSize = 256;
+    int blockSize = 256;
     int gridSize = (width * height) / blockSize + 1;
     const int reducedEndSize = 64;
 
