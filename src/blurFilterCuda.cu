@@ -53,6 +53,8 @@ bool verify_threshold(pixel* source, pixel* dest, int j, int k, int width, int t
     return true;
 }
 
+#define BOOL_AND_BLOCK_SIZE 256
+
 __global__ void bool_and_multi_block(const bool* in, int array_size, bool* out) {
     int thIdx = threadIdx.x;
     int gthIdx = thIdx + blockIdx.x * blockDim.x;
@@ -63,7 +65,7 @@ __global__ void bool_and_multi_block(const bool* in, int array_size, bool* out) 
         result = result && in[i];
     }
 
-    __shared__ bool shared_arr[blockDim.x];
+    __shared__ bool shared_arr[BOOL_AND_BLOCK_SIZE];
     shared_arr[thIdx] = result;
     __syncthreads();
 
@@ -257,8 +259,8 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
             cudaCheckErrors(cudaStreamSynchronize(streams[i]));
         }
 
-        bool_and_multi_block<<<reducedEndSize, gridSize>>>(end_device, width * height, end_reduced_device);
-        bool_and_multi_block<<<1, gridSize>>>(end_reduced_device, reducedEndSize, end_reduced_device);
+        bool_and_multi_block<<<reducedEndSize, BOOL_AND_BLOCK_SIZE>>>(end_device, width * height, end_reduced_device);
+        bool_and_multi_block<<<1, BOOL_AND_BLOCK_SIZE>>>(end_reduced_device, reducedEndSize, end_reduced_device);
 
         checkCudaErrors(cudaMemcpy(&end, end_reduced_device, sizeof(bool), cudaMemcpyDeviceToHost));
 
