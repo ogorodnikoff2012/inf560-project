@@ -7,6 +7,16 @@
 #include <helper_cuda.h>
 #include "common.h"
 
+#define checkCudaErrors(call)                                 \
+  do {                                                        \
+    cudaError_t err = call;                                   \
+    if (err != cudaSuccess) {                                 \
+      printf("CUDA error at %s %d: %s\n", __FILE__, __LINE__, \
+             cudaGetErrorString(err));                        \
+      exit(EXIT_FAILURE);                                     \
+    }                                                         \
+  } while (0)
+
 #define NB_STREAMS 8
 
 cudaStream_t streams[NB_STREAMS];
