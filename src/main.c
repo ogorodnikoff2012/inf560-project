@@ -1497,7 +1497,8 @@ void collect_data(animated_gif* image, collection_config* cfg, const char* outpu
 //    }
     for (int slave = 1; slave < cfg->world_size; ++slave) {
         get_signal_from_slave(slave);
-        animated_gif* slave_result = load_pixels(generate_output_filename(output_filename, slave));
+        char* slave_result_filename = generate_output_filename(output_filename, slave);
+        animated_gif* slave_result = load_pixels(slave_result_filename);
         for (int image_index = 0; image_index < cfg->n_images; ++image_index) {
             copy_stripe(
                     slave_result->p[image_index],
@@ -1507,6 +1508,8 @@ void collect_data(animated_gif* image, collection_config* cfg, const char* outpu
                     &cfg->s_info[image_index][slave]);
             free(slave_result->p[image_index]); // We aren't interested on other memory leaks
         }
+        remove(slave_result_filename);
+        free(slave_result_filename);
     }
 }
 
