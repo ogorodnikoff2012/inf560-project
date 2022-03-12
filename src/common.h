@@ -50,15 +50,25 @@ typedef enum {
 #define CONV(l, c, nb_c) \
     ((l)*(nb_c)+(c))
 
-extern void allocate_device_MPI_process(int rank);
-extern void createCudaStreams();
-extern void destroyCudaStreams();
-extern void apply_blur_filter_cuda(
-        animated_gif *image,
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void allocate_device_MPI_process(int rank);
+
+void createCudaStreams();
+
+void destroyCudaStreams();
+
+void apply_blur_filter_cuda(
+        animated_gif* image,
         int size,
         int threshold,
         int image_index,
         striping_info* s_info);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif //SOBELF_COMMON_H
