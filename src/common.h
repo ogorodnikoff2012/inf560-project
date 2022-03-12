@@ -56,10 +56,6 @@ extern "C" {
 
 void allocate_device_MPI_process(int rank);
 
-void createCudaStreams();
-
-void destroyCudaStreams();
-
 void apply_blur_filter_cuda(
         animated_gif* image,
         int size,

@@ -22,14 +22,12 @@ void allocate_device_MPI_process(int rank) {
     printf("MPI process %d uses device %d\n", rank, deviceUsed);
 }
 
-extern "C"
 void createCudaStreams() {
     for(int i = 0; i < NB_STREAMS; i++) {
         cudaStreamCreate(&streams[i]);
     }
 }
 
-extern "C"
 void destroyCudaStreams() {
     for(int i = 0; i < NB_STREAMS; i++) {
         cudaStreamDestroy(streams[i]);
@@ -185,6 +183,8 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     bool* end_device;
     bool* end_reduced_device;
 
+    createCudaStreams();
+
     /* Get the pixels of all images */
     p = (image->p)[image_index];
 
@@ -278,4 +278,6 @@ void apply_blur_filter_cuda(animated_gif *image, int size, int threshold, int im
     checkCudaErrors(cudaFree(new_device));
     checkCudaErrors(cudaFree(end_device));
     checkCudaErrors(cudaFree(end_reduced_device));
+
+    destroyCudaStreams();
 }

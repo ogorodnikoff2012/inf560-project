@@ -1680,7 +1680,6 @@ int main(int argc, char *argv[]) {
 
 #ifdef USE_CUDA
     allocate_device_MPI_process(rank);
-    createCudaStreams();
 #endif
 
     // report_hostname();
@@ -1703,9 +1702,6 @@ int main(int argc, char *argv[]) {
         ret_code = slave_main(argc, argv);
     }
 
-#ifdef USE_CUDA
-    destroyCudaStreams();
-#endif
     MPI_Finalize();
     return ret_code;
 }
