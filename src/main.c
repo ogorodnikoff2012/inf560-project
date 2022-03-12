@@ -18,32 +18,13 @@
 #include <limits.h>
 
 #include "gif_lib.h"
+#include "common.h"
 
 /* Set this macro to 1 to enable debugging information */
 #define SOBELF_DEBUG 0
 
-
-/* Represent one pixel from the image */
-typedef struct pixel {
-    uint8_t r; /* Red */
-    uint8_t g; /* Green */
-    uint8_t b; /* Blue */
-} pixel;
-
-extern void allocate_device_MPI_process(int rank);
-extern void blur_filter_cuda(int omprank, int size, pixel* p, int j, int k, int width);
-
 MPI_Datatype kMPIPixelDatatype;
-
-/* Represent one GIF image (animated or not */
-typedef struct animated_gif {
-    int n_images; /* Number of images */
-    int *width; /* Width of each image */
-    int *height; /* Height of each image */
-    pixel **p; /* Pixels of each image */
-    GifFileType *g; /* Internal representation.
-                         DO NOT MODIFY */
-} animated_gif;
+MPI_Datatype kMPIStripingInfoDatatype;
 
 /*
  * Load a GIF image from a file and return a
@@ -238,7 +219,6 @@ int output_modified_read_gif(char *filename, GifFileType *g) {
 
     return 1;
 }
-
 
 int store_pixels(char *filename, animated_gif *image) {
     int n_colors = 0;
@@ -571,17 +551,6 @@ int store_pixels(char *filename, animated_gif *image) {
     return 1;
 }
 
-typedef struct striping_info {
-    int min_row;
-    int max_row;
-    bool single_mode;
-    int top_neighbour_id;
-    int bottom_neigbour_id;
-} striping_info;
-
-#define CONV(l, c, nb_c) \
-    ((l)*(nb_c)+(c))
-
 void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_info) {
     int row, col;
     pixel *p;
@@ -590,12 +559,15 @@ void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_in
 
     const int width = image->width[image_index];
 
-#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, s_info) private(row, col)
-    for (row = s_info->min_row; row < s_info->max_row; row++) {
+    const int min_row = s_info->min_row;
+    const int max_row = s_info->max_row;
+
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, min_row, max_row) private(row, col)
+    for (row = min_row; row < max_row; row++) {
         for (col = 0; col < width; ++col) {
             int moy;
 
-            moy = (p[j].r + p[j].g + p[j].b) / 3;
+            moy = (p[CONV(row, col, width)].r + p[CONV(row, col, width)].g + p[CONV(row, col, width)].b) / 3;
 
             if (moy < 0) {
                 moy = 0;
@@ -605,9 +577,9 @@ void apply_gray_filter(animated_gif *image, int image_index, striping_info* s_in
                 moy = 255;
             }
 
-            p[j].r = moy;
-            p[j].g = moy;
-            p[j].b = moy;
+            p[CONV(row, col, width)].r = moy;
+            p[CONV(row, col, width)].g = moy;
+            p[CONV(row, col, width)].b = moy;
         }
     }
 }
@@ -635,9 +607,6 @@ void synchronize_rows(pixel* p, int width, int height, int row_count, striping_i
 #define BTM_RECV 2
 #define BTM_SEND 3
 
-#define TOP_TO_BTM_TAG 0
-#define BTM_TO_TOP_TAG 1
-
     MPI_Request requests[] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
     if (s_info->top_neighbour_id != -1) {
@@ -658,33 +627,36 @@ void synchronize_rows(pixel* p, int width, int height, int row_count, striping_i
 
 #undef TOP_RECV
 #undef TOP_SEND
-#indef BTM_RECV
+#undef BTM_RECV
 #undef BTM_SEND
-#undef TOP_TO_BTM_TAG
-#undef BTM_TO_TOP_TAG
 }
 
 void synchronize_bool_and(int* var, striping_info* s_info) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int world_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
     if (rank == 0) {
-        for (int slave = 1; slave < world_size; ++slave) {
+        for (int slave = 1; slave < s_info->stripe_count; ++slave) {
             int value;
-            MPI_Recv(&value, 1, MPI_INT, slave, 0, MPI_COMM_WORLD);
+            MPI_Recv(&value, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             *var &= value;
         }
 
-        for (int slave = 1; slave < world_size; ++slave) {
-            MPI_Send(var, 1, MPI_INT, slave, 0, MPI_COMM_WORLD);
+        for (int slave = 1; slave < s_info->stripe_count; ++slave) {
+            MPI_Send(var, 1, MPI_INT, slave, SIGNAL_TAG, MPI_COMM_WORLD);
         }
     } else {
-        MPI_Send(var, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-        MPI_Recv(var, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+        MPI_Send(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
+        MPI_Recv(var, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
+}
+
+static inline int min(int x, int y) {
+    return x < y ? x : y;
+}
+
+static inline int max(int x, int y) {
+    return x < y ? y : x;
 }
 
 void apply_blur_filter(animated_gif *image, int size, int threshold, int image_index, striping_info* s_info) {
@@ -719,10 +691,27 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             synchronize_rows(p, width, height, size, s_info);
         }
 
-        #pragma omp parallel
+        const int begin1    = max(0, s_info->min_row);
+        const int end1      = min(size, s_info->max_row);
+        const int begin2    = max(size, s_info->min_row);
+        const int end2      = min(height - size, s_info->max_row);
+        const int begin3    = max(size, s_info->min_row);
+        const int end3      = min(height - size, s_info->max_row);
+        const int begin4    = max(height - size, s_info->min_row);
+        const int end4      = min(height - 1, s_info->max_row);
+        const int begin5    = max(size, s_info->min_row);
+        const int end5      = min(height / 10 - size, s_info->max_row);
+        const int begin6    = max(height / 10 - size, s_info->min_row);
+        const int end6      = min((int)(height * 0.9 + size), s_info->max_row);
+        const int begin7    = max((int)(height * 0.9 + size), s_info->min_row);
+        const int end7      = min(height - size, s_info->max_row);
+        const int begin8    = max(1, s_info->min_row);
+        const int end8      = min(height - 1, s_info->max_row);
+
+        #pragma omp parallel shared(end)
         {
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(0, s_info->min_row); j < min(size, s_info->max_row); j++) {
+            for (j = begin1; j < end1; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -731,7 +720,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin2; j < end2; j++) {
                 for (k = 0; k < size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -740,7 +729,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin3; j < end3; j++) {
                 for (k = width - size; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -749,7 +738,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
             }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(new, p, width, height, size, s_info) schedule(static) nowait
-            for (j = max(height - size, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+            for (j = begin4; j < end4; j++) {
                 for (k = 0; k < width - 1; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -759,7 +748,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Apply blur on top part of image (10%) */
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, s_info) schedule(static) nowait
-            for (j = max(size, s_info->min_row); j < min(height / 10 - size, s_info->max_row); j++) {
+            for (j = begin5; j < end5; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
                     int t_r = 0;
@@ -774,8 +763,6 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                         }
                     }
 
-                    blur_filter_cuda(omp_get_thread_num(), size, p, j, k; width);
-
                     new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
                     new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
                     new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
@@ -784,8 +771,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Copy the middle part of the image */
 #pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, size, s_info) schedule(static) nowait
-            for (j = max(height / 10 - size, s_info->min_row); j < min((int) (height * 0.9 + size), s_info->max_row);
-                 j++) {
+            for (j = begin6; j < end6; j++) {
                 for (k = size; k < width - size; k++) {
                     new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
                     new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
@@ -795,7 +781,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             /* Apply blur on the bottom part of the image (10%) */
 #pragma omp for collapse(2) private(j, k) firstprivate(width, height, new, p, size, s_info) schedule(static)
-            for (j = max((int) (height * 0.9 + size), s_info->min_row); j < min(height - size, s_info->max_row); j++) {
+            for (j = begin7; j < end7; j++) {
                 for (k = size; k < width - size; k++) {
                     int stencil_j, stencil_k;
                     int t_r = 0;
@@ -818,8 +804,8 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 
             // Sync point
 
-#pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold, s_info) schedule(static)
-            for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+#pragma omp for collapse(2) private(j, k) firstprivate(p, new, width, height, threshold, s_info) schedule(static) reduction(&&: end)
+            for (j = begin8; j < end8; j++) {
                 for (k = 1; k < width - 1; k++) {
 
                     float diff_r;
@@ -836,19 +822,19 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
                         ||
                         diff_b > threshold || -diff_b > threshold
                             ) {
-                        end = 0;
+                        end = end && 0;
                     }
 
                     p[CONV(j, k, width)].r = new[CONV(j, k, width)].r;
                     p[CONV(j, k, width)].g = new[CONV(j, k, width)].g;
                     p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
                 }
-
             }
 
-            if (!s_info->single_mode) {
-                synchronize_bool_and(&end, s_info);
-            }
+        }
+
+        if (!s_info->single_mode) {
+            synchronize_bool_and(&end, s_info);
         }
     } while (threshold > 0 && !end);
 #if SOBELF_DEBUG
@@ -856,6 +842,7 @@ void apply_blur_filter(animated_gif *image, int size, int threshold, int image_i
 #endif
 
     free(new);
+
 }
 
 void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_info) {
@@ -879,8 +866,11 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
 
     #pragma omp parallel
     {
+        const int beginOuter = max(1, s_info->min_row);
+        const int endOuter   = min(height - 1, s_info->max_row);
+
 #pragma omp for collapse(2) private(j, k) firstprivate(p, sobel, width, height, s_info) schedule(static)
-        for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+        for (j = beginOuter; j < endOuter; j++) {
             for (k = 1; k < width - 1; k++) {
                 int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
                 int pixel_blue_so, pixel_blue_s, pixel_blue_se;
@@ -922,7 +912,7 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
         }
 
 #pragma omp for collapse(2) private(j, k) firstprivate(p, sobel, width, height, s_info) schedule(static)
-        for (j = max(1, s_info->min_row); j < min(height - 1, s_info->max_row); j++) {
+        for (j = beginOuter; j < endOuter; j++) {
             for (k = 1; k < width - 1; k++) {
                 p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
                 p[CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
@@ -935,21 +925,15 @@ void apply_sobel_filter(animated_gif *image, int image_index, striping_info* s_i
 
 #define BLUR_RADIUS (5)
 
-void apply_all_filters(animated_gif *image, striping_info* s_info) {
-    for (int i = 0; i < image->n_images; ++i) {
-        // Convert the pixels into grayscale
-        apply_gray_filter(image, i, s_info);
-    }
+void apply_all_filters(animated_gif *image, int image_idx, striping_info* s_info) {
+    // Convert the pixels into grayscale
+    apply_gray_filter(image, image_idx, s_info);
 
-    for (int i = 0; i < image->n_images; ++i) {
-        // Apply blur filter with convergence value
-        apply_blur_filter(image, BLUR_RADIUS, 20, i, s_info);
-    }
+    // Apply blur filter with convergence value
+    apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
 
-    for (int i = 0; i < image->n_images; ++i) {
-        // Apply sobel filter on pixels
-        apply_sobel_filter(image, i, s_info);
-    }
+    // Apply sobel filter on pixels
+    apply_sobel_filter(image, image_idx, s_info);
 }
 
 void prepare_pixel_datatype(MPI_Datatype *datatype) {
@@ -965,6 +949,28 @@ void prepare_pixel_datatype(MPI_Datatype *datatype) {
     MPI_Type_commit(datatype);
 }
 
+void prapare_striping_info_datatype(MPI_Datatype* datatype) {
+    const int nitems = 6;
+    int blocklengths[6] = {1, 1, 1, 1, 1, 1};
+    MPI_Datatype types[6] = {MPI_INT, MPI_INT, MPI_INT, MPI_INT, MPI_INT, MPI_INT};
+    MPI_Aint offsets[6];
+
+    offsets[0] = offsetof(striping_info, min_row);
+    offsets[1] = offsetof(striping_info, max_row);
+    offsets[2] = offsetof(striping_info, single_mode);
+    offsets[3] = offsetof(striping_info, top_neighbour_id);
+    offsets[4] = offsetof(striping_info, bottom_neighbour_id);
+    offsets[5] = offsetof(striping_info, stripe_count);
+
+    MPI_Type_create_struct(nitems, blocklengths, offsets, types, datatype);
+    MPI_Type_commit(datatype);
+}
+
+void prepare_datatypes() {
+    prepare_pixel_datatype(&kMPIPixelDatatype);
+    prapare_striping_info_datatype(&kMPIStripingInfoDatatype);
+}
+
 int slave_sync(void) {
     int value;
     MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -975,11 +981,21 @@ void master_sync(int value) {
     MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
 }
 
+void send_signal_to_master() {
+    int buffer = 1;
+    MPI_Send(&buffer, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
+}
+
+void get_signal_from_slave(int slave_rank) {
+    int buffer;
+    MPI_Recv(&buffer, 1, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
 #define WORK_MODE_FAILURE  (0)
 #define WORK_MODE_LEGACY   (1)
 #define WORK_MODE_STRIPING (2)
 
-void slave_broadcast_metadata(animateg_gif* image) {
+void slave_broadcast_metadata(animated_gif* image) {
     MPI_Bcast(&image->n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     image->width = calloc(image->n_images, sizeof(int));
@@ -996,9 +1012,122 @@ void master_broadcast_metadata(animated_gif* image) {
     MPI_Bcast(image->height, image->n_images, MPI_INT, 0, MPI_COMM_WORLD);
 }
 
-int slave_striping(animated_gif* image) {
-    slave_broadcast_metadata(image);
-    .....
+int slave_receive_stripe_info(striping_info* s_info) {
+    MPI_Recv(s_info, 1, kMPIStripingInfoDatatype, 0, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    int used = s_info->max_row >= 0 ? 1 : 0;
+
+    /*
+    printf("SLAVE  ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+           used,
+           s_info->min_row,
+           s_info->max_row,
+           s_info->single_mode,
+           s_info->top_neighbour_id,
+           s_info->bottom_neighbour_id,
+           s_info->stripe_count
+    );
+     */
+
+    return used;
+}
+
+void slave_receive_stripe(pixel* p, int width, int height, striping_info* s_info) {
+    int row_count = s_info->max_row - s_info->min_row;
+    MPI_Recv(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+             0, DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
+void slave_send_stripe(pixel* p, int width, int height, striping_info* s_info) {
+    int row_count = s_info->max_row - s_info->min_row;
+    MPI_Send(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+             0, DATA_TAG, MPI_COMM_WORLD);
+}
+
+void clear_outer_pixels(pixel* p, int width, int height, striping_info* s_info) {
+    int row, col;
+    if (s_info->max_row == -1) {
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(p, width, height) private(row, col)
+        for (row = 0; row < height; ++row) {
+            for (col = 0; col < width; ++col) {
+                p[CONV(row, col, width)].r = 0;
+                p[CONV(row, col, width)].g = 0;
+                p[CONV(row, col, width)].b = 0;
+            }
+        }
+    } else {
+#pragma omp parallel
+        {
+#pragma omp for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col) nowait
+            for (row = 0; row < s_info->min_row; ++row) {
+                for (col = 0; col < width; ++col) {
+                    p[CONV(row, col, width)].r = 0;
+                    p[CONV(row, col, width)].g = 0;
+                    p[CONV(row, col, width)].b = 0;
+                }
+            }
+#pragma omp for collapse(2) schedule(static) firstprivate(p, width, height, s_info) private(row, col)
+            for (row = s_info->max_row; row < height; ++row) {
+                for (col = 0; col < width; ++col) {
+                    p[CONV(row, col, width)].r = 0;
+                    p[CONV(row, col, width)].g = 0;
+                    p[CONV(row, col, width)].b = 0;
+                }
+            }
+        }
+    }
+}
+
+void copy_stripe(pixel* src, pixel* dst, int width, int height, striping_info* s_info) {
+    if (s_info->max_row == -1) { return; }
+    int row, col;
+#pragma omp parallel for collapse(2) schedule(static) firstprivate(src, dst, width,height, s_info) private(row, col)
+    for (row = s_info->min_row; row < s_info->max_row; ++row) {
+        for (col = 0; col < width; ++col) {
+            dst[CONV(row, col, width)].r = src[CONV(row, col, width)].r;
+            dst[CONV(row, col, width)].g = src[CONV(row, col, width)].g;
+            dst[CONV(row, col, width)].b = src[CONV(row, col, width)].b;
+        }
+    }
+}
+
+int slave_striping(animated_gif* image, char* output_filename) {
+    // slave_broadcast_metadata(image);
+
+    for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
+        int width = image->width[image_idx];
+        int height = image->height[image_idx];
+
+        striping_info s_info;
+        int has_work = slave_receive_stripe_info(&s_info);
+        if (!has_work) {
+            pixel* p = image->p[image_idx]; // = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
+            clear_outer_pixels(p, width, height, &s_info);
+            continue;
+        }
+
+        pixel* p = image->p[image_idx]; // = calloc(image->width[image_idx] * image->height[image_idx], sizeof(pixel));
+        // slave_receive_stripe(p, width, height, &s_info);
+        apply_all_filters(image, image_idx, &s_info);
+        clear_outer_pixels(p, width, height, &s_info);
+        // slave_send_stripe(p, width, height, &s_info);
+        // free(p);
+    }
+
+    // free(image->width);
+    // free(image->height);
+    // free(image->p);
+    store_pixels(output_filename, image);
+    send_signal_to_master();
+
+    return 0;
+}
+
+char* generate_output_filename(const char* original, int rank) {
+    int orig_len = strlen(original);
+    int buf_len = orig_len + 100;
+    char* buffer = calloc(buf_len, sizeof(char));
+    snprintf(buffer, buf_len, "%s.%d.gif", original, rank);
+    return buffer;
 }
 
 int slave_main(int argc, char *argv[]) {
@@ -1007,16 +1136,19 @@ int slave_main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    animated_gif image;
-
     int work_mode = slave_sync();
 
     if (work_mode == WORK_MODE_FAILURE) {
         return 1;
     }
 
+    char* input_filename = argv[1];
+    char* output_filename = generate_output_filename(argv[2], rank);
+
+    animated_gif* image = load_pixels(input_filename);
+
     if (work_mode == WORK_MODE_STRIPING) {
-        return slave_striping(&image);
+        return slave_striping(image, output_filename);
     }
 
     if (work_mode != WORK_MODE_LEGACY) {
@@ -1025,16 +1157,21 @@ int slave_main(int argc, char *argv[]) {
     }
 
     /* First, we broadcast metadata */
-    slave_broadcast_metadata(&image);
+    // slave_broadcast_metadata(&image);
 
-    const int kSignalTag = image.n_images;
+    const int kSignalTag = image->n_images;
 
     int image_index = -1;
     MPI_Send(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD);
 
-    MPI_Request processed_image_requests[image.n_images];
-    for (int i = 0; i < image.n_images; ++i) {
+    MPI_Request processed_image_requests[image->n_images];
+    for (int i = 0; i < image->n_images; ++i) {
         processed_image_requests[i] = MPI_REQUEST_NULL;
+    }
+
+    bool processed_images[image->n_images];
+    for (int i = 0; i < image->n_images; ++i) {
+        processed_images[i] = false;
     }
 
     while (true) {
@@ -1043,43 +1180,60 @@ int slave_main(int argc, char *argv[]) {
             break;
         }
 
+        /*
         image.p[image_index] = calloc(image.width[image_index] * image.height[image_index], sizeof(pixel));
         MPI_Recv(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
                  image_index, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        */
 
-        /* Convert the pixels into grayscale */
-        apply_gray_filter(&image, image_index);
+        processed_images[image_index] = true;
 
-        /* Apply blur filter with convergence value */
-        apply_blur_filter(&image, 5, 20, image_index);
+        striping_info s_info;
+        s_info.single_mode = 1;
+        s_info.min_row = 0;
+        s_info.max_row = image->height[image_index];
+        s_info.top_neighbour_id = -1;
+        s_info.bottom_neighbour_id = -1;
+        s_info.stripe_count = 1;
 
-        /* Apply sobel filter on pixels */
-        apply_sobel_filter(&image, image_index);
-
+        apply_all_filters(image, image_index, &s_info);
 
         MPI_Request req;
         MPI_Isend(&image_index, 1, MPI_INT, 0, kSignalTag, MPI_COMM_WORLD, &req);
         MPI_Request_free(&req);
 
-        MPI_Isend(image.p[image_index], image.width[image_index] * image.height[image_index], kMPIPixelDatatype, 0,
-                  image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
+        // MPI_Isend(image->p[image_index], image->width[image_index] * image->height[image_index],
+        // kMPIPixelDatatype, 0,
+        //          image_index, MPI_COMM_WORLD, processed_image_requests + image_index);
     }
 
-    for (int i = 0; i < image.n_images; ++i) {
+    for (int i = 0; i < image->n_images; ++i) {
         if (processed_image_requests[i] != MPI_REQUEST_NULL) {
             MPI_Wait(processed_image_requests + i, MPI_STATUS_IGNORE);
         }
-        free(image.p[i]);
+        if (!processed_images[i]) {
+            striping_info s_info;
+            s_info.min_row = -1;
+            s_info.max_row = -1;
+            s_info.single_mode = 1;
+            s_info.top_neighbour_id = -1;
+            s_info.bottom_neighbour_id = -1;
+            s_info.stripe_count = 1;
+            clear_outer_pixels(image->p[i], image->width[i], image->height[i], &s_info);
+        }
+        // free(image->p[i]);
     }
 
-    free(image.width);
-    free(image.height);
-    free(image.p);
+    // free(image->width);
+    // free(image->height);
+    // free(image->p);
+    store_pixels(output_filename, image);
+    send_signal_to_master();
 
     return 0;
 }
 
-void do_master_work_legacy(animated_gif *image) {
+collection_config* do_master_work_legacy(animated_gif *image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1087,8 +1241,15 @@ void do_master_work_legacy(animated_gif *image) {
 
     const int kSignalTag = image->n_images;
 
+    printf("Working mode: legacy\n");
+
     /* First, we broadcast metadata */
-    master_broadcast_metadata(image);
+    // master_broadcast_metadata(image);
+
+    collection_config* cfg = calloc(1, sizeof(collection_config));
+    cfg->n_images = image->n_images;
+    cfg->world_size = world_size;
+    cfg->s_info = calloc(cfg->n_images, sizeof(void*));
 
     /* Start scheduling */
     MPI_Request table_of_requests[world_size];
@@ -1117,8 +1278,20 @@ void do_master_work_legacy(animated_gif *image) {
 
         int image_index = slave_signals[indx];
         if (image_index != -1) {
-            MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
-                      kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
+            striping_info* s_info = cfg->s_info[image_index] = calloc(world_size, sizeof(striping_info));
+            for (int i = 0; i < world_size; ++i) {
+                s_info[i].min_row = -1;
+                s_info[i].max_row = -1;
+                s_info[i].single_mode = 1;
+                s_info[i].top_neighbour_id = -1;
+                s_info[i].bottom_neighbour_id = -1;
+                s_info[i].stripe_count = 1;
+            }
+            s_info[indx].min_row = 0;
+            s_info[indx].max_row = image->height[image_index];
+
+            // MPI_Irecv(image->p[image_index], image->width[image_index] * image->height[image_index],
+            //           kMPIPixelDatatype, indx, image_index, MPI_COMM_WORLD, &processed_image_requests[image_index]);
             ++processed_images;
         }
 
@@ -1133,9 +1306,9 @@ void do_master_work_legacy(animated_gif *image) {
             int next_image_index = sent_images++;
             MPI_Isend(&next_image_index, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, &req);
             MPI_Request_free(&req);
-            MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
-                      kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
-            MPI_Request_free(&req);
+            // MPI_Isend(image->p[next_image_index], image->width[next_image_index] * image->height[next_image_index],
+            //          kMPIPixelDatatype, indx, next_image_index, MPI_COMM_WORLD, &req);
+            // MPI_Request_free(&req);
 
             MPI_Irecv(slave_signals + indx, 1, MPI_INT, indx, kSignalTag, MPI_COMM_WORLD, table_of_requests + indx);
         }
@@ -1160,57 +1333,165 @@ void do_master_work_legacy(animated_gif *image) {
             slave_terminated[i] = true;
         }
     }
+
+    return cfg;
 }
 
-void do_master_work_striping(animated_gif* image) {
+int prepare_stripe_info(int height, int world_size, striping_info* s_info) {
+    for (int i = 0; i < world_size; ++i) {
+        s_info[i].max_row = -1;
+    }
+
+    int last_max_row = 0;
+    int stripe_count = 0;
+    while (last_max_row < height) {
+        int stripe_height = max((height + world_size - 1) / world_size, BLUR_RADIUS);
+
+        int min_row = last_max_row;
+        int max_row = min_row + stripe_height;
+        if (height - max_row < BLUR_RADIUS) {
+            max_row = height;
+        }
+        if (max_row > height) {
+            max_row = height;
+        }
+
+        s_info[stripe_count].min_row = min_row;
+        s_info[stripe_count].max_row = max_row;
+        s_info[stripe_count].single_mode = false;
+        s_info[stripe_count].top_neighbour_id = -1;
+        s_info[stripe_count].bottom_neighbour_id = -1;
+
+        ++stripe_count;
+        last_max_row = max_row;
+    }
+
+    for (int i = 0; i < stripe_count; ++i) {
+        s_info[i].stripe_count = stripe_count;
+        if (i > 0) {
+            s_info[i].top_neighbour_id = i - 1;
+        }
+        if (i < stripe_count - 1) {
+            s_info[i].bottom_neighbour_id = i + 1;
+        }
+    }
+
+    return stripe_count;
+}
+
+void master_send_stripe(int slave_rank, pixel* p, int width, int height, striping_info* s_info, MPI_Request* requests) {
+    int used = s_info->max_row >= 0 ? 1 : 0;
+    /*
+    printf("MASTER ok?%d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+        used,
+        s_info->min_row,
+        s_info->max_row,
+        s_info->single_mode,
+        s_info->top_neighbour_id,
+        s_info->bottom_neighbour_id,
+        s_info->stripe_count
+    );
+     */
+
+    MPI_Isend(s_info, 1, kMPIStripingInfoDatatype, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank]);
+
+    //if (!used) {
+    requests[2 * slave_rank + 1] = MPI_REQUEST_NULL;
+    return;
+    //}
+
+    //int row_count = s_info->max_row - s_info->min_row;
+    //MPI_Isend(p + CONV(s_info->min_row, 0, width), width * row_count, kMPIPixelDatatype,
+    //          slave_rank, DATA_TAG, MPI_COMM_WORLD, &requests[2 * slave_rank + 1]);
+}
+
+void master_receive_stripes(pixel* p, int width, int height, striping_info* s_info, int stripe_count) {
+    MPI_Request requests[stripe_count];
+    requests[0] = MPI_REQUEST_NULL;
+
+    for (int i = 1; i < stripe_count; ++i) {
+        int row_count = s_info[i].max_row - s_info[i].min_row;
+        MPI_Irecv(p + CONV(s_info[i].min_row, 0, width), width * row_count, kMPIPixelDatatype,
+                  i, DATA_TAG, MPI_COMM_WORLD, &requests[i]);
+    }
+
+    MPI_Waitall(stripe_count, requests, MPI_STATUSES_IGNORE);
+}
+
+collection_config* do_master_work_striping(animated_gif* image) {
     int rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+    printf("Working mode: striping\n");
+
     /* First, we broadcast metadata */
-    master_broadcast_metadata(image);
+    // master_broadcast_metadata(image);
+
+    collection_config* cfg = calloc(1, sizeof(collection_config));
+    cfg->n_images = image->n_images;
+    cfg->world_size = world_size;
+    cfg->s_info = calloc(cfg->n_images, sizeof(void*));
 
     for (int image_idx = 0; image_idx < image->n_images; ++image_idx) {
         int width = image->width[image_idx];
         int height = image->height[image_idx];
 
-        stripe_info s_info[world_size];
-        int stripe_count = 0;
+        striping_info* s_info = cfg->s_info[image_idx] = calloc(world_size, sizeof(striping_info));
+        int stripe_count = prepare_stripe_info(height, world_size, s_info);
 
-        int last_max_row = 0;
-        while (last_max_row < height) {
-            int stripe_height = max((height + world_size - 1) / world_size, BLUR_RADIUS);
+        // Send stripes
 
-            int min_row = last_max_row;
-            int max_row = min_row + stripe_height;
-            if (height - max_row < BLUR_RADIUS) {
-                max_row = height;
-            }
-            if (max_row > height) {
-                max_row = height;
-            }
+        MPI_Request requests[2 * world_size];
+        requests[0] = requests[1] = MPI_REQUEST_NULL;
 
-            s_info[stripe_count].min_row = min_row;
-            s_info[stripe_count].max_row = max_row;
-            s_info[stripe_count].single_mode = false;
-            s_info[stripe_count].top_neighbour = -1;
-            s_info[stripe_count].bottom_neighbour = -1;
-
-            ++stripe_count;
-            last_max_row = max_row;
+        for (int i = 1; i < world_size; ++i) {
+            master_send_stripe(i, image->p[image_idx], width, height, &s_info[i], requests);
         }
 
-        for (int i = 0; i < stripe_count; ++i) {
-            if (i > 0) {
-                s_info[i].top_neighbour = i - 1;
-            }
-            if (i < stripe_count - 1) {
-                s_info[i].bottom_neighbour = i + 1;
-            }
-        }
+        apply_all_filters(image, image_idx, &s_info[0]);
 
-        // TODO FINISH
+        MPI_Waitall(2 * world_size, requests, MPI_STATUSES_IGNORE);
+
+        // master_receive_stripes(image->p[image_idx], width, height, s_info, stripe_count);
+    }
+
+    return cfg;
+}
+
+void collect_data(animated_gif* image, collection_config* cfg, const char* output_filename) {
+//    // Just print it
+//    for (int i = 0; i < cfg->n_images; ++i) {
+//        printf("Image %3d/%3d\n", i, cfg->n_images);
+//        for (int j = 0; j < cfg->world_size; ++j) {
+//            striping_info* s_info = &cfg->s_info[i][j];
+//            printf("SLAVE %2d/%2d s_i{min_r=%d,max_r=%d,s_m=%d,t_n=%d,b_n=%d,s_c=%d}\n",
+//                   j, cfg->world_size,
+//                   s_info->min_row,
+//                   s_info->max_row,
+//                   s_info->single_mode,
+//                   s_info->top_neighbour_id,
+//                   s_info->bottom_neighbour_id,
+//                   s_info->stripe_count
+//            );
+//        }
+//    }
+    for (int slave = 1; slave < cfg->world_size; ++slave) {
+        get_signal_from_slave(slave);
+        char* slave_result_filename = generate_output_filename(output_filename, slave);
+        animated_gif* slave_result = load_pixels(slave_result_filename);
+        for (int image_index = 0; image_index < cfg->n_images; ++image_index) {
+            copy_stripe(
+                    slave_result->p[image_index],
+                    image->p[image_index],
+                    image->width[image_index],
+                    image->height[image_index],
+                    &cfg->s_info[image_index][slave]);
+            free(slave_result->p[image_index]); // We aren't interested on other memory leaks
+        }
+        remove(slave_result_filename);
+        free(slave_result_filename);
     }
 }
 
@@ -1255,14 +1536,18 @@ int master_main(int argc, char *argv[]) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    if (image->n_images >= world_size - 1) {
+    bool use_legacy = (world_size >= 4) && (image->n_images >= world_size - 1);
+
+    collection_config* cfg;
+
+    if (use_legacy) {
         master_sync(WORK_MODE_LEGACY);
 
-        do_master_work_legacy(image);
+        cfg = do_master_work_legacy(image);
     } else {
         master_sync(WORK_MODE_STRIPING);
 
-        do_master_work_striping(image);
+        cfg = do_master_work_striping(image);
     }
 
     /* FILTER Timer stop */
@@ -1274,6 +1559,9 @@ int master_main(int argc, char *argv[]) {
 
     /* EXPORT Timer start */
     gettimeofday(&t1, NULL);
+
+    collect_data(image, cfg, output_filename);
+    free(cfg);
 
     /* Store file from array of pixels to GIF file */
     if (!store_pixels(output_filename, image)) {
@@ -1327,7 +1615,19 @@ int old_main(int argc, char *argv[]) {
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    apply_all_filters(image);
+    printf("Working mode: single\n");
+
+    for (int i = 0; i < image->n_images; ++i) {
+        striping_info s_info;
+        s_info.single_mode = 1;
+        s_info.min_row = 0;
+        s_info.max_row = image->height[i];
+        s_info.top_neighbour_id = -1;
+        s_info.bottom_neighbour_id = -1;
+        s_info.stripe_count = 1;
+
+        apply_all_filters(image, i, &s_info);
+    }
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);
@@ -1364,21 +1664,15 @@ void report_hostname() {
  * Main entry point
  */
 int main(int argc, char *argv[]) {
-    int nbGPU, deviceUsed;
-
     MPI_Init(&argc, &argv);
 
-    prepare_pixel_datatype(&kMPIPixelDatatype);
+    prepare_datatypes();
 
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-    if(world_size > 1) {
-        allocate_device_MPI_process(rank);
-    }
 
     // report_hostname();
 
