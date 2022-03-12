@@ -999,6 +999,16 @@ void master_sync(int value) {
     MPI_Bcast(&value, 1, MPI_INT, 0, MPI_COMM_WORLD);
 }
 
+void send_signal_to_master() {
+    int buffer = 1;
+    MPI_Send(&buffer, 1, MPI_INT, 0, SIGNAL_TAG, MPI_COMM_WORLD);
+}
+
+void get_signal_from_slave(int slave_rank) {
+    int buffer;
+    MPI_Recv(&buffer, 1, MPI_INT, slave_rank, SIGNAL_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
 #define WORK_MODE_FAILURE  (0)
 #define WORK_MODE_LEGACY   (1)
 #define WORK_MODE_STRIPING (2)
@@ -1125,6 +1135,7 @@ int slave_striping(animated_gif* image, char* output_filename) {
     // free(image->height);
     // free(image->p);
     store_pixels(output_filename, image);
+    send_signal_to_master();
 
     return 0;
 }
@@ -1234,6 +1245,7 @@ int slave_main(int argc, char *argv[]) {
     // free(image->height);
     // free(image->p);
     store_pixels(output_filename, image);
+    send_signal_to_master();
 
     return 0;
 }
@@ -1483,6 +1495,7 @@ void collect_data(animated_gif* image, collection_config* cfg, const char* outpu
 //        }
 //    }
     for (int slave = 1; slave < cfg->world_size; ++slave) {
+        get_signal_from_slave(slave);
         animated_gif* slave_result = load_pixels(generate_output_filename(output_filename, slave));
         for (int image_index = 0; image_index < cfg->n_images; ++image_index) {
             copy_stripe(
