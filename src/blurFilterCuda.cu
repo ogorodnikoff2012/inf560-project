@@ -83,7 +83,7 @@ __global__ void bool_and_multi_block(const bool* in, int array_size, bool* out) 
 }
 
 __global__ void apply_blur_filter_loop_srcToDest(pixel* source, pixel* dest, int width, int threshold,
-                                                 int minCol, int maxCol, int minRow, int maxRow, bool* end) {
+                                                 int minRow, int maxRow, int minCol, int maxCol, bool* end) {
     int j, k;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -103,7 +103,7 @@ __global__ void apply_blur_filter_loop_srcToDest(pixel* source, pixel* dest, int
 }
 
 __global__ void apply_blur_filter_loop_medium(pixel* source, pixel* dest, int width, int size, int threshold,
-                                              int minCol, int maxCol, int minRow, int maxRow, bool* end) {
+                                              int minRow, int maxRow, int minCol, int maxCol, bool* end) {
     int j, k;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -137,7 +137,7 @@ __global__ void apply_blur_filter_loop_medium(pixel* source, pixel* dest, int wi
 }
 
 __global__ void apply_blur_filter_loop_final(pixel* source, pixel* dest, int threshold, int width,
-                                             int minCol, int maxCol, int minRow, int maxRow, char* end) {
+                                             int minRow, int maxRow, int minCol, int maxCol, bool* end) {
     int j, k;
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
