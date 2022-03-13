@@ -931,12 +931,10 @@ void apply_all_filters(animated_gif *image, int image_idx, striping_info* s_info
 
     // Apply blur filter with convergence value
 #ifdef USE_CUDA
-    int world_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    if (world_size > 1) {
-        apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
-    } else {
+    if (s_info->single_mode) {
         apply_blur_filter_cuda(image, BLUR_RADIUS, 20, image_idx, s_info);
+    } else {
+        apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
     }
 #else
     apply_blur_filter(image, BLUR_RADIUS, 20, image_idx, s_info);
