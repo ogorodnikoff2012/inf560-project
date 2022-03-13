@@ -63,6 +63,9 @@ void apply_blur_filter_cuda(
         int image_index,
         striping_info* s_info);
 
+void createCudaStreams();
+void destroyCudaStreams();
+
 #ifdef __cplusplus
 }
 #endif
