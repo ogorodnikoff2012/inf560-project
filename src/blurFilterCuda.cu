@@ -19,7 +19,7 @@ void allocate_device_MPI_process(int rank) {
     checkCudaErrors(cudaSetDevice(rank % nbGPU));
     checkCudaErrors(cudaGetDevice(&deviceUsed));
 
-    printf("MPI process %d uses device %d\n", rank, deviceUsed);
+    // printf("MPI process %d uses device %d\n", rank, deviceUsed);
 }
 
 void createCudaStreams() {
